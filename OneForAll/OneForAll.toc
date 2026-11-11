@@ -10,6 +10,7 @@
 ## SavedVariablesPerCharacter: OneForAllCharDB, ForeverCompanionCharDB
 
 Locales\Locale.lua
+Locales\zhTW.lua
 Locales\deDE.lua
 Locales\Names_deDE.lua
 Locales\frFR.lua
