@@ -110,7 +110,8 @@ function FLT:CreateMinimapButton()
   -- Shift-right-click: the Crafting List (user 24.10.)
   button:SetScript("OnClick", function(_, mouse)
     if mouse == "RightButton" then
-      if IsShiftKeyDown and IsShiftKeyDown() and FLT.CraftList then FLT.CraftList.Toggle() end
+      if IsAltKeyDown and IsAltKeyDown() and FLT.SkillUp and FLT.SkillUp.ToggleLastGuide then FLT.SkillUp.ToggleLastGuide()
+      elseif IsShiftKeyDown and IsShiftKeyDown() and FLT.CraftList then FLT.CraftList.Toggle() end
       return
     end
     if FLT.ToggleUI then FLT:ToggleUI() end
@@ -129,6 +130,7 @@ function FLT:CreateMinimapButton()
     GameTooltip:AddLine(FLT.DISPLAY_NAME or "OneForAll", 1, 0.82, 0)
     GameTooltip:AddLine(L["Left-click: Open / close"], 1, 1, 1)
     GameTooltip:AddLine(L["Shift-right-click: Crafting List"], 1, 1, 1)
+    GameTooltip:AddLine(L["Alt-right-click: last Skill-Up guide"], 1, 1, 1)
     GameTooltip:AddLine(L["Drag: Move around the minimap"], 0.75, 0.75, 0.75)
     GameTooltip:Show()
   end)
@@ -152,14 +154,61 @@ function FLT:CreateMinimapButton()
   if Minimap.HookScript then Minimap:HookScript("OnSizeChanged", FLT.PositionMinimapButton) end
   if C_Timer and C_Timer.After then C_Timer.After(3, FLT.PositionMinimapButton) end
   button:Show()
+  FLT.RegisterLDBIcon()
   if FLT.MinimapCollectorRefresh then FLT.MinimapCollectorRefresh() end
+end
+
+-- Leatrix Plus gathers only LibDBIcon buttons in its button bag (6.2.5, Discord vkinglouie 11.11.: our button stayed at
+-- the minimap). With Leatrix Plus loaded and its LibDBIcon / LibDataBroker there, OneForAll registers a LibDBIcon button
+-- of the same use and hides its own; MinimapCollectorRefresh shows / hides it like our button.
+function FLT.RegisterLDBIcon()
+  if FLT.ldbIcon ~= nil then return FLT.ldbIcon end
+  FLT.ldbIcon = false
+  local loaded = (C_AddOns and C_AddOns.IsAddOnLoaded) or IsAddOnLoaded
+  if not (loaded and loaded("Leatrix_Plus")) or type(LibStub) ~= "table" then return false end
+  local LDB, LDBI = LibStub("LibDataBroker-1.1", true), LibStub("LibDBIcon-1.0", true)
+  if not (LDB and LDBI and LDB.NewDataObject and LDBI.Register) then return false end
+  local obj = LDB:NewDataObject("OneForAll", {
+    type = "launcher", icon = "Interface\\AddOns\\OneForAll\\Assets\\minimap_icon",
+    OnClick = function(_, mouse)
+      if mouse == "RightButton" then
+        if IsAltKeyDown and IsAltKeyDown() and FLT.SkillUp and FLT.SkillUp.ToggleLastGuide then FLT.SkillUp.ToggleLastGuide()
+        elseif IsShiftKeyDown and IsShiftKeyDown() and FLT.CraftList then FLT.CraftList.Toggle() end
+      elseif FLT.ToggleUI then FLT:ToggleUI() end
+    end,
+    OnTooltipShow = function(tt)
+      tt:AddLine(FLT.DISPLAY_NAME or "OneForAll", 1, 0.82, 0)
+      tt:AddLine(L["Left-click: Open / close"], 1, 1, 1)
+      tt:AddLine(L["Shift-right-click: Crafting List"], 1, 1, 1)
+      tt:AddLine(L["Alt-right-click: last Skill-Up guide"], 1, 1, 1)
+    end,
+  })
+  if not obj then return false end
+  if type(OneForAllDB) ~= "table" then return false end
+  OneForAllDB.ldbIcon = OneForAllDB.ldbIcon or {}
+  if not pcall(LDBI.Register, LDBI, "OneForAll", obj, OneForAllDB.ldbIcon) then return false end
+  FLT.ldbIcon = LDBI
+  return LDBI
+end
+-- registered as early as possible (when our saved variables are there), so Leatrix Plus finds the button when it gathers
+-- them; Leatrix_Plus loads before OneForAll (alphabetical), its libraries are there by then
+do
+  local f = CreateFrame("Frame")
+  f:RegisterEvent("ADDON_LOADED")
+  f:SetScript("OnEvent", function(self, _, name)
+    if name ~= "OneForAll" then return end
+    self:UnregisterAllEvents()
+    pcall(FLT.RegisterLDBIcon)
+  end)
 end
 
 -- QoL "mmSquare" (5.7.3, user 25.10., off by default): a square minimap with a thin black frame. The round border,
 -- compass and north tag are hidden, GetMinimapShape() answers "SQUARE" so other addons' buttons follow the edge.
 -- Left alone when ElvUI runs or another addon already made the minimap square. Switching off restores everything.
 local square = { on = false }
-local SQUARE_HIDE = { "MinimapBorder", "MinimapCompassTexture", "MinimapNorthTag" }
+-- MinimapCompassTextureUnderlay: Forever's own round ring, shown again by MinimapCluster:UpdateMinimapConfig() (beta39,
+-- found by ProEvilz on Discord 12.11.: "Enabling the square minimap doesn't remove the circular border")
+local SQUARE_HIDE = { "MinimapBorder", "MinimapCompassTexture", "MinimapNorthTag", "MinimapCompassTextureUnderlay" }
 -- the zoom buttons sit on the round rim; on the square map they go to its corner (user 25.10.; GameTimeFrame is the
 -- calendar in Forever, not the sun - left alone): name, anchor point on the Minimap, x, y
 -- the frames may also hang under Minimap / MinimapCluster as .ZoomIn / .ZoomOut (newer client code, user 26.10.:
@@ -214,6 +263,21 @@ local function moveCorners(on)
     end
   end
 end
+-- the client sets the round mask and shows its ring again whenever it sets up the minimap (UpdateMinimapConfig, e.g.
+-- when the rotation changes): put the square back right after it (hooked once, does nothing while the option is off)
+local function squareAgain()
+  if not square.on then return end
+  Minimap:SetMaskTexture("Interface\\ChatFrame\\ChatFrameBackground")
+  for _, n in ipairs(SQUARE_HIDE) do
+    local t = _G[n]
+    if type(t) == "table" and t.IsShown and t:IsShown() then
+      t:Hide()
+      local known = false
+      for _, h in ipairs(square.hidden or {}) do if h == t then known = true end end
+      if not known and square.hidden then square.hidden[#square.hidden + 1] = t end
+    end
+  end
+end
 function FLT.ApplySquareMinimap()
   if type(Minimap) ~= "table" or not Minimap.SetMaskTexture then return end
   local want = FLT.QoL and FLT.QoL.Get and FLT.QoL.Get("mmSquare") and true or false
@@ -243,6 +307,9 @@ function FLT.ApplySquareMinimap()
       square.frame = f
     end
     square.frame:Show()
+    if not square.hooked and type(MinimapCluster) == "table" and type(MinimapCluster.UpdateMinimapConfig) == "function" and hooksecurefunc then
+      hooksecurefunc(MinimapCluster, "UpdateMinimapConfig", squareAgain); square.hooked = true
+    end
     moveCorners(true)
     -- once more a moment later, in case the game lays out the minimap after us
     if C_Timer and C_Timer.After then C_Timer.After(1, function() if square.on then moveCorners(true) end end) end
@@ -254,6 +321,8 @@ function FLT.ApplySquareMinimap()
     Minimap:SetMaskTexture(186178)
     for _, t in ipairs(square.hidden or {}) do t:Show() end
     square.hidden = nil
+    -- let the client set its minimap up again (its own mask, the ring only where it belongs); not in combat
+    if square.hooked and not (InCombatLockdown and InCombatLockdown()) then pcall(MinimapCluster.UpdateMinimapConfig, MinimapCluster) end
     if square.frame then square.frame:Hide() end
     moveCorners(false)
     GetMinimapShape = square.shape

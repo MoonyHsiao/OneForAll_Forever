@@ -17,6 +17,25 @@ local getDungeonQuestStatus = H.getDungeonQuestStatus
 local getQuestLogInfo = H.getQuestLogInfo
 local questLogButton = H.questLogButton
 local getChainProgress = H.getChainProgress
+local getUnavailableReason = H.getUnavailableReason
+-- a place text without its "(x, y)": coordinates are shown only next to a Map button (6.2.6, user 11.11.)
+local function noCoords(s) return type(s) == "string" and (s:gsub("%s*%(%-?[%d%.]+, %-?[%d%.]+%)", "")) or s end
+-- why a dungeon quest is unavailable, as text (nil = no known reason)
+local function unavailableText(q)
+  local kind, a, b = getUnavailableReason(q)
+  if kind == "side" then return string.format(L["%s only"], L[a]) end
+  if kind == "class" then
+    return string.format(L["%s only"], (type(LOCALIZED_CLASS_NAMES_MALE) == "table" and LOCALIZED_CLASS_NAMES_MALE[a]) or (a:sub(1,1)..a:sub(2):lower()))
+  end
+  if kind == "race" then return string.format(L["%s only"], a) end
+  if kind == "level" then return string.format(L["Requires level %d (you are level %d)"], a, b) end
+  if kind == "step" then
+    local t = string.format(L["First: %s"], NM(a.name) or (L["Quest"].." "..tostring(a.id)))
+    local detail = a.id and FLT.QUEST_PREREQ_DETAILS and FLT.QUEST_PREREQ_DETAILS[a.id]
+    if detail and detail.pickup then t = t.."\n"..string.format(L["Start: %s"], PT(noCoords(detail.pickup))) end
+    return t
+  end
+end
 local dungeonSideColor = H.dungeonSideColor
 local normalizeDungeonItem = H.normalizeDungeonItem
 local colorDungeonItemText = H.colorDungeonItemText
@@ -466,6 +485,7 @@ local function createDungeonPanel(parent)
   local ROW_BORDER_HI={0.86,0.66,0.26,1}
 
   local browseRows={}
+  local browseOrder={}
   for di,d in ipairs(FLT.DUNGEONS or {}) do
     local dungeon=d
     local partial=d.dataStatus=="partial"
@@ -679,6 +699,7 @@ local function createDungeonPanel(parent)
     local highFirst=cfg.highFirst and true or false
     local brackets=raids and RAID_BRACKETS or BRACKETS
     local secs=raids and raidSections or sections
+    wipe(browseOrder) -- the dungeons in the order the list shows them (< > on the detail page, 6.2.7-beta12)
     for step=1,#brackets do
       local bi=highFirst and (#brackets-step+1) or step
       local sec=secs[bi]
@@ -695,6 +716,7 @@ local function createDungeonPanel(parent)
           elseif raids or not onlyFit or fitsPlayer(entry.dungeon) then visible[#visible+1]=entry end
         end
         sortEntries(visible,s,highFirst)
+        for _,entry in ipairs(visible) do browseOrder[#browseOrder+1]=entry.dungeon end
         for _,entry in ipairs(sec.rows) do entry.row:Hide() end
         if #visible==0 then
           sec.header:Hide(); sec.box:Hide(); sec.y=nil
@@ -806,6 +828,30 @@ local function createDungeonPanel(parent)
   if detailBanner then OrnateFrame(detailBanner, detailBanner, 18, 4, "OVERLAY", 2) end
   local back=UI.GoldButton(detail,L["Dungeons"],112,24,ASSET_ROOT.."icon_back",12); back:SetPoint("TOPLEFT",8,-74)
   back:SetScript("OnClick",function() detail:Hide(); browse:Show() end)
+  -- 6.2.7-beta12 (user 13.11.: "zwei button < und > wo man die dungeon durchschalten kann"): previous / next dungeon in
+  -- the order of the list (its sorting and filters), round at the ends; the view (bosses / quests) stays
+  local function neighbour(step)
+    local list=browseOrder
+    if #list==0 then list={}; for _,d in ipairs(FLT.DUNGEONS or {}) do if (not d.raid)==(not (selectedDungeon and selectedDungeon.raid)) then list[#list+1]=d end end end
+    local n=#list; if n==0 or not selectedDungeon then return nil end
+    local at=1; for i,d in ipairs(list) do if d==selectedDungeon then at=i break end end
+    return list[(at-1+step)%n+1]
+  end
+  local function stepButton(step)
+    -- the gold arrow of the "Dungeons" button (user 13.11.: "den < links neben Dungeons finde ich schoener"), mirrored for next
+    local b=UI.GoldButton(detail,"",28,24,ASSET_ROOT.."icon_back",12)
+    b.iconGap=0
+    if b.icon then b.icon:ClearAllPoints(); b.icon:SetPoint("CENTER"); if step>0 then b.icon:SetTexCoord(1,0,0,1) end end
+    b:SetScript("OnClick",function() local d=neighbour(step); if d and d~=selectedDungeon then UI.OpenDungeon(d,nil,(mode=="quests" and "quests") or nil) end end)
+    b:SetScript("OnEnter",function(self)
+      local d=neighbour(step); if not d then return end
+      GameTooltip:SetOwner(self,"ANCHOR_BOTTOM"); GameTooltip:SetText(DN(d.name or "")); GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave",function() GameTooltip:Hide() end)
+    return b
+  end
+  local prevBtn=stepButton(-1); prevBtn:SetPoint("LEFT",back,"RIGHT",6,0)
+  local nextBtn=stepButton(1); nextBtn:SetPoint("LEFT",prevBtn,"RIGHT",4,0)
   -- ht9 (user 30.10.): the band over the full width again (ht8 had made it as narrow as the list), a 1 px line
   local dband=CreateFrame("Frame",nil,detail); dband:SetPoint("TOPLEFT",8,-8); dband:SetSize(FULL_W,58)
   local dbandBg=makeTexture(dband,"BACKGROUND",0.045,0.045,0.058,0.96); dbandBg:SetPoint("TOPLEFT",1,-1); dbandBg:SetPoint("BOTTOMRIGHT",-1,1)
@@ -1057,7 +1103,7 @@ local function createDungeonPanel(parent)
       t.num=num
       -- small ornate corners mark the selected boss
       local orn=OrnateFrame(b,b,10,1,"OVERLAY",2); for _,o in ipairs(orn) do o:Hide() end
-      rows[i]={button=b,bg=bg,text=t,icon=icon,boss=boss,orn=orn}
+      rows[i]={button=b,bg=bg,text=t,icon=icon,boss=boss,orn=orn,lv=lv}
     end
     if #trashLoot>0 then
       local i=#bosses+1
@@ -1104,6 +1150,16 @@ local function createDungeonPanel(parent)
       end
 
       for i,pane in pairs(detailPanes) do if i~=newIdx then pane:Hide() end end
+      -- 6.2.7-beta7 (user 13.11.: a friend targeted the bosses and still saw "Level ?"): a pane built before the level /
+      -- type was learned in game is built again, and the list row shows the learned level
+      local rb=rows[newIdx] and rows[newIdx].boss
+      if rb and rows[newIdx].lv and FLT.GetBossLevel then
+        local lvNow=FLT:GetBossLevel(rb); if lvNow then rows[newIdx].lv:SetText(string.format(L["Level %s"],lvNow)) end
+      end
+      local stale=detailPanes[newIdx]
+      if stale and stale.needsInfo and stale.boss and FLT.GetBossLevel and FLT:GetBossLevel(stale.boss) and FLT.GetBossType and FLT:GetBossType(stale.boss) then
+        stale:Hide(); detailPanes[newIdx]=nil
+      end
       if detailPanes[newIdx] then
         local pane=detailPanes[newIdx]
         pane:Show()
@@ -1140,11 +1196,11 @@ local function createDungeonPanel(parent)
         local rank=FLT.GetBossRank and FLT:GetBossRank(boss)
         if rank=="Rare" then parts[#parts+1]="|cff4fa3ff"..L["Rare"].."|r" elseif rank then parts[#parts+1]=L[rank] end
         local t=table.concat(parts,"  |  ")
-        if not bossLevel or not ctype then t=t.."  |cff8f8f8f"..L["(target the boss once to learn the rest)"].."|r" end
+        if not bossLevel or not ctype then t=t.."  |cff8f8f8f"..L["(target the boss once to learn the rest)"].."|r"; host.needsInfo=true end
         sub:SetText(t)
       end
       if isTrash then
-        local desc=dtext(host,"GameFontHighlightSmall"); desc:SetPoint("TOPLEFT",18,-80); desc:SetWidth(500); desc:SetJustifyH("LEFT"); desc:SetText(L["Rare+ dungeon drops plus selected notable set/progression items. Generic green world drops are omitted."])
+        -- 6.2.7-beta11: no extra line here - it ran into the header (user screenshot 13.11.); the subtitle says it
       elseif boss.description then
         local desc=dtext(host,"GameFontHighlightSmall"); desc:SetPoint("TOPLEFT",18,-80); desc:SetWidth(500); desc:SetJustifyH("LEFT"); desc:SetText(boss.description)
       end
@@ -1302,6 +1358,41 @@ local function createDungeonPanel(parent)
     local h=FLT.NewFS(parent,nil,"OVERLAY","GameFontNormalSmall"); h:SetPoint("TOPLEFT",10,y); h:SetWidth(86); h:SetJustifyH("LEFT"); h:SetText(L[label]); h:SetTextColor(FLT.SkinC(1,0.82,0.20))
     local b=FLT.NewFS(parent,nil,"OVERLAY","GameFontHighlightSmall"); b:SetPoint("TOPLEFT",100,y); b:SetWidth(valueW or 330); b:SetJustifyH("LEFT"); b:SetText(text or L["Unknown"]); b:SetWordWrap(true)
     return y-math.max(16,b:GetStringHeight() or 16)-8, b
+  end
+  -- 6.2.7 (user 13.11.: "das muss alles gepflegt sein"): "Starts at" / "Turn in" with a Map button whenever the place is known;
+  -- an NPC or drop inside the dungeon points to its entrance
+  local function entranceLoc(d,text)
+    if not (d and d.mapZone and d.mapX and d.mapY and type(text)=="string") then return nil end
+    if not (text:find(" inside ",1,true) or text:find("dropped by ",1,true)) then return nil end
+    return {zone=d.mapZone,x=d.mapX,y=d.mapY,label=string.format(L["%s entrance"],DN(d.name)),entrance=true}
+  end
+  local function placeRow(parent,y,label,text,loc)
+    local yStart=y
+    local ny=infoRow(parent,y,label,text and PT(noCoords(text)) or L["Unknown"],loc and 250 or 330)
+    if loc then
+      local b=UI.GoldButton(parent,L["Map"],62,20,ASSET_ROOT.."icon_map",11)
+      b:SetPoint("TOPRIGHT",parent,"TOPLEFT",446,yStart+3)
+      b:SetScript("OnClick",function() FLT:ShowOnMap(loc) end)
+      b:SetScript("OnEnter",function(self)
+        GameTooltip:SetOwner(self,"ANCHOR_RIGHT")
+        GameTooltip:SetText(L[label],1,0.82,0.20)
+        if loc.entrance and text then GameTooltip:AddLine(PT(noCoords(text)),0.92,0.90,0.84,true) end
+        GameTooltip:AddLine(loc.label or loc.name or "",0.92,0.90,0.84,true)
+        GameTooltip:AddLine(L["Open the world map and mark this location with the golden OneForAll pin."],0.72,0.72,0.72,true)
+        GameTooltip:Show()
+      end)
+      b:SetScript("OnLeave",function() GameTooltip:Hide() end)
+    end
+    return ny
+  end
+  local function who(text) return type(text)=="string" and text:match("^([^,]+),") or nil end
+  -- start and turn-in place of a quest (or a key step): the text's coordinates, our checked starts, the pin data, the
+  -- same NPC as the other end, else the dungeon entrance
+  local function questPlaces(d,id,starts,turnin)
+    local s=FLT.QuestLoc and FLT:QuestLoc(id,starts)
+    local e=turnin and turnin~="" and FLT.QuestEndLoc and FLT:QuestEndLoc(id,turnin) or nil
+    if turnin and turnin~="" and who(turnin) and who(turnin)==who(starts) then e=e or s; s=s or e end
+    return s or entranceLoc(d,starts), turnin and turnin~="" and (e or entranceLoc(d,turnin)) or nil
   end
   -- framed box with a gold title; returns the box, the y where content starts
   -- and a function that closes the box at the given y (returns the next y)
@@ -1524,26 +1615,17 @@ local function createDungeonPanel(parent)
       local ry=-4
       local statusValue
       do
-        local loc=FLT.QuestLoc and FLT:QuestLoc(q.id,q.starts)
-        local yStart=ry
-        ry=infoRow(rchild,ry,N"Starts at",q.starts and PT(q.starts) or L["Unknown"],loc and 250 or 330)
-        if loc then
-          local mapBtn=UI.GoldButton(rchild,L["Map"],62,20,ASSET_ROOT.."icon_map",11)
-          mapBtn:SetPoint("TOPRIGHT",rchild,"TOPLEFT",446,yStart+3)
-          mapBtn:SetScript("OnClick",function() if FLT.ShowQuestStartOnMap then FLT:ShowQuestStartOnMap(q) end end)
-          mapBtn:SetScript("OnEnter",function(self)
-            GameTooltip:SetOwner(self,"ANCHOR_RIGHT")
-            GameTooltip:SetText(L["Quest start"],1,0.82,0.20)
-            GameTooltip:AddLine(loc.label or (q.starts and PT(q.starts) or NM(q.name)),0.92,0.90,0.84,true)
-            GameTooltip:AddLine(L["Open the world map and mark this location with the golden OneForAll pin."],0.72,0.72,0.72,true)
-            GameTooltip:Show()
-          end)
-          mapBtn:SetScript("OnLeave",function() GameTooltip:Hide() end)
-        end
+        local sLoc,eLoc=questPlaces(d,q.id,q.starts,q.turnin)
+        ry=placeRow(rchild,ry,N"Starts at",q.starts,sLoc)
+        if q.turnin and q.turnin~="" then ry=placeRow(rchild,ry,N"Turn in",q.turnin,eLoc) end
       end
-      if q.turnin and q.turnin~="" then ry=infoRow(rchild,ry,N"Turn in",PT(q.turnin)) end
       ry=infoRow(rchild,ry,N"Dungeon",DN(d.name))
       ry,statusValue=infoRow(rchild,ry,N"Status","")
+      -- why it is unavailable, under the status (6.2.6, user 11.11.); the pane is rebuilt when the reason changes
+      local builtReason=getDungeonQuestStatus(d, q)=="unavailable" and unavailableText(q) or nil
+      if builtReason then
+        local rv; ry,rv=infoRow(rchild,ry,N"Reason",builtReason); rv:SetTextColor(FLT.SkinC(0.80,0.74,0.62))
+      end
       -- next to "In log": open the quest in the quest log (user 06.11.; chain quests have it per step below)
       local statusLog=questLogButton(rchild); statusLog:SetQuest(q.id,q.name)
       local chain=q.id and FLT.QUEST_PREREQ_CHAINS and FLT.QUEST_PREREQ_CHAINS[q.id]
@@ -1594,9 +1676,9 @@ local function createDungeonPanel(parent)
             GameTooltip:SetOwner(self,"ANCHOR_RIGHT")
             GameTooltip:SetText(NM(step.name) or (L["Quest"].." "..tostring(step.id or "?")),1,0.82,0.20)
             if detail then
-              if detail.pickup then GameTooltip:AddLine(string.format(L["Start: %s"],PT(detail.pickup)),0.92,0.90,0.84,true) end
+              if detail.pickup then GameTooltip:AddLine(string.format(L["Start: %s"],PT(noCoords(detail.pickup))),0.92,0.90,0.84,true) end
               if detail.objective then GameTooltip:AddLine(NM(detail.objective),1,1,1,true) end
-              if detail.turnin then GameTooltip:AddLine(string.format(L["Turn in: %s"],PT(detail.turnin)),0.76,0.76,0.72,true) end
+              if detail.turnin then GameTooltip:AddLine(string.format(L["Turn in: %s"],PT(noCoords(detail.turnin))),0.76,0.76,0.72,true) end
               if step.optional then GameTooltip:AddLine(L["Optional lead-in: not required to accept the quest."],0.62,0.60,0.56,true) end
             elseif isCurrent then
               GameTooltip:AddLine(q.objective and NM(q.objective) or L["The dungeon quest on this page"],0.92,0.90,0.84,true)
@@ -1652,6 +1734,8 @@ local function createDungeonPanel(parent)
 
       pane.update=function()
         local questStatus=getDungeonQuestStatus(d, q)
+        local reason=questStatus=="unavailable" and unavailableText(q) or nil
+        if reason~=builtReason then pane:Hide(); detailPanes[newIdx]=nil; if questSelection[d.key]==newIdx then selectQuest(newIdx) end; return end
         local statusLabel=L[QUEST_STATUS_LABELS[questStatus] or questStatus]
         local stepIdx, stepTotal = getChainProgress(q)
         local col=STATUS_COLOR[questStatus] or STATUS_COLOR.available
@@ -1832,19 +1916,19 @@ local function createDungeonPanel(parent)
       local y=-4
       if step then
         if step.pickup then
-          local yStart=y
-          y=infoRow(c,y,N"Starts at",PT(step.pickup),step.map and 250 or 330)
-          if step.map then
-            local mb=UI.GoldButton(c,L["Map"],62,20,ASSET_ROOT.."icon_map",11); mb:SetPoint("TOPRIGHT",c,"TOPLEFT",446,yStart+3)
-            mb:SetScript("OnClick",function() FLT:ShowOnMap({mapID=step.map.mapID,x=step.map.x,y=step.map.y,name=step.name}) end)
-          end
+          local sLoc=step.map and {mapID=step.map.mapID,x=step.map.x,y=step.map.y,label=PT(noCoords(step.pickup))} or nil
+          local s2,e2=questPlaces(d,step.quest,step.pickup,step.turnin)
+          y=placeRow(c,y,N"Starts at",step.pickup,sLoc or s2)
+          if step.turnin then y=placeRow(c,y,N"Turn in",step.turnin,e2) end
+        elseif step.turnin then
+          local _,e2=questPlaces(d,step.quest,nil,step.turnin)
+          y=placeRow(c,y,N"Turn in",step.turnin,e2)
         end
-        if step.turnin then y=infoRow(c,y,N"Turn in",PT(step.turnin)) end
         if step.loot then
           -- an item the step needs and where it lies, with its own Map button (6.2.4, user 10.11.: the Grimy Key in
           -- "Key to the City")
           local yStart=y
-          y=infoRow(c,y,N"Loot",NM(step.loot.name)..": "..PT(step.loot.place),step.loot.map and 250 or 330)
+          y=infoRow(c,y,N"Loot",NM(step.loot.name)..": "..PT(step.loot.map and step.loot.place or noCoords(step.loot.place)),step.loot.map and 250 or 330)
           if step.loot.map then
             local lb=UI.GoldButton(c,L["Map"],62,20,ASSET_ROOT.."icon_map",11); lb:SetPoint("TOPRIGHT",c,"TOPLEFT",446,yStart+3)
             lb:SetScript("OnClick",function() FLT:ShowOnMap({mapID=step.loot.map.mapID,x=step.loot.map.x,y=step.loot.map.y,name=step.loot.name}) end)

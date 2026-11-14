@@ -93,9 +93,9 @@ local DUAL_WIELD = { WARRIOR = true, ROGUE = true, HUNTER = true }
 local RELIC = { PALADIN = 7, DRUID = 8, SHAMAN = 9 }
 local WEAPONS = { -- weapon subclass IDs
   WARRIOR = {0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18}, PALADIN = {0, 1, 4, 5, 6, 7, 8},
-  HUNTER = {0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18}, ROGUE = {2, 3, 4, 7, 13, 15, 16, 18},
+  HUNTER = {0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18}, ROGUE = {0, 2, 3, 4, 7, 13, 15, 16, 18}, -- rogue 0 = one-handed axes (Forever, all rogues; user 11.11.)
   PRIEST = {4, 10, 15, 19}, SHAMAN = {0, 1, 4, 5, 10, 13, 15}, MAGE = {7, 10, 15, 19}, WARLOCK = {7, 10, 15, 19},
-  DRUID = {4, 5, 10, 13, 15},
+  DRUID = {4, 5, 6, 10, 13, 15}, -- 6 polearms: Forever lets druids learn them from 20 (client SkillRaceClassInfo; Discord kiaseli 10.11.)
 }
 FLT.CLASS_WEAPONS = WEAPONS -- also for the weapon trainers in UI/TrainerSpells.lua
 local canWield = {}
@@ -1170,7 +1170,7 @@ function UI.CreateGearPlanner(parent)
     local id = GetInventoryItemID and GetInventoryItemID("player", slot)
     local cur = wornEnchant(slot)
     local GV = FLT.GearValue
-    local base = GV and GV.SlotItemValue(slot) or 0
+    local gearTot = GV and GV.Total()
     local curV = (cur and GV and GV.EnchantValue(cur, slot, id)) or 0
     title:SetText(string.format(L[tab == "wish" and N"Wishlist: %s" or N"Enchants: %s"], SW(SLOT_NAME[slot]) or ""))
     wipe(elist)
@@ -1218,10 +1218,11 @@ function UI.CreateGearPlanner(parent)
       if where then parts[#parts + 1] = where end
       r.sub:SetText(table.concat(parts, "  ·  "))
       if o.e == cur then r.val:SetText("|cffb0b0b0" .. L["worn"] .. "|r")
-      elseif o.v and o.v > 0 and base + curV > 0 then
-        local pct = (o.v - curV) / (base + curV) * 100
-        if pct >= 0.5 then r.val:SetText(string.format("|cff40ff40+%d%%|r", math.floor(pct + 0.5)))
-        elseif pct <= -0.5 then r.val:SetText(string.format("|cffff5050-%d%%|r", math.floor(-pct + 0.5)))
+      elseif o.v and o.v > 0 and gearTot and gearTot > 0 then
+        -- % of the whole gear's Value, like the items (6.2.5)
+        local pct = (o.v - curV) / gearTot * 100
+        if pct >= 0.1 then r.val:SetText("|cff40ff40+" .. GV.Pct(pct) .. "%|r")
+        elseif pct <= -0.1 then r.val:SetText("|cffff5050-" .. GV.Pct(-pct) .. "%|r")
         else r.val:SetText("|cffb0b0b0=|r") end
       elseif o.v and o.v > 0 then r.val:SetText("|cff40ff40" .. L["new"] .. "|r")
       else r.val:SetText("|cffb0b0b0-|r") end
@@ -1382,8 +1383,8 @@ function UI.CreateGearPlanner(parent)
       if crafted then FLT.SetTex(r.pro.tex, FLT.PROFESSION_ICONS and FLT.PROFESSION_ICONS[e.prof] or "Interface\\Icons\\INV_Misc_QuestionMark") end
       local kind, pct
       if FLT.GearValue then kind, pct = FLT.GearValue.Change(e.id) end
-      if kind == "up" then r.val:SetText(string.format("|cff40ff40+%d%%|r", math.floor(pct + 0.5)))
-      elseif kind == "down" then r.val:SetText(string.format("|cffff5050-%d%%|r", math.floor(pct + 0.5)))
+      if kind == "up" then r.val:SetText("|cff40ff40+" .. FLT.GearValue.Pct(pct) .. "%|r")
+      elseif kind == "down" then r.val:SetText("|cffff5050-" .. FLT.GearValue.Pct(pct) .. "%|r")
       elseif kind == "new" then r.val:SetText("|cff40ff40" .. L["new"] .. "|r")
       elseif kind == "worn" then r.val:SetText("|cffb0b0b0" .. L["worn"] .. "|r")
       elseif kind == "same" then r.val:SetText("|cffb0b0b0=|r") else r.val:SetText("") end
@@ -1412,20 +1413,24 @@ end
 -- is picked. Starts with the active spec's weights; "Copy from" puts a spec's weights in. Built when first opened.
 local WEIGHT_STATS = {
   { "str", N"Strength" }, { "agi", N"Agility" }, { "sta", N"Stamina" }, { "int", N"Intellect" }, { "spi", N"Spirit" },
-  { "ap", N"Attack Power" }, { "rap", N"Ranged Attack Power" }, { "fap", N"Feral Attack Power" }, { "dps", N"Weapon DPS" },
-  { "wskill", N"Weapon Skill (per 1 %)" }, { "hit", N"Hit (per 1 %)" }, { "crit", N"Crit (per 1 %)" },
+  { "ap", N"Attack Power" }, { "rap", N"Ranged Attack Power" }, { "fap", N"Feral Attack Power" },
+  -- weapon DPS and speed per hand (6.2.5: only one "Weapon DPS" was shown, and it counted for ranged weapons / wands only)
+  { "dpsmelee", N"Weapon DPS (main hand)" }, { "dpsoh", N"Weapon DPS (off hand)" },
+  { "speed", N"Weapon speed (main hand)" }, { "speedoh", N"Weapon speed (off hand)" },
+  { "dps", N"Weapon DPS (ranged, wand)" }, { "wskill", N"Weapon Skill (per 1 %)" }, { "hit", N"Hit (per 1 %)" }, { "crit", N"Crit (per 1 %)" },
   { "sp", N"Spell Power" }, { "heal", N"Healing" }, { "mp5", N"Mana per 5 sec." }, { "armor", N"Armor" },
   { "def", N"Defense" }, { "dodge", N"Dodge (per 1 %)" }, { "parry", N"Parry (per 1 %)" }, { "block", N"Block (per 1 %)" },
   { "bv", N"Block Value" }, { "fire", N"Fire Spell Damage" }, { "frost", N"Frost Spell Damage" },
   { "shadow", N"Shadow Spell Damage" }, { "arcane", N"Arcane Spell Damage" }, { "nature", N"Nature Spell Damage" },
-  { "holy", N"Holy Spell Damage" },
+  { "holy", N"Holy Spell Damage" }, { "hp", N"Health" }, { "hp5", N"Health per 5 sec." }, { "mana", N"Mana" },
 }
+FLT.GEAR_CUSTOM_STATS = WEIGHT_STATS -- only these count for own weights (UI/GearValue.lua)
 local editor
 function UI.ShowWeightEditor(onChange)
   local GV = FLT.GearValue; if not GV then return end
   if not editor then
     local f = CreateFrame("Frame", "OneForAllWeightEditor", UIParent)
-    f:SetSize(560, 470); f:SetPoint("CENTER", 0, 30); f:SetFrameStrata("FULLSCREEN_DIALOG")
+    f:SetSize(560, 590); f:SetPoint("CENTER", 0, 30); f:SetFrameStrata("FULLSCREEN_DIALOG")
     f:EnableMouse(true); f:SetMovable(true); f:RegisterForDrag("LeftButton"); f:SetClampedToScreen(true)
     f:SetScript("OnDragStart", f.StartMoving); f:SetScript("OnDragStop", f.StopMovingOrSizing)
     if UISpecialFrames then table.insert(UISpecialFrames, "OneForAllWeightEditor") end
@@ -1434,11 +1439,12 @@ function UI.ShowWeightEditor(onChange)
     local t = FLT.NewFS(f, nil, "OVERLAY", "GameFontNormalLarge"); t:SetPoint("TOPLEFT", 18, -16); t:SetText(L["Custom weights"])
     t:SetTextColor(1, 0.82, 0.20)
     local d = FLT.NewFS(f, nil, "OVERLAY", "GameFontDisableSmall"); d:SetPoint("TOPLEFT", 18, -38); d:SetWidth(520); d:SetJustifyH("LEFT")
-    d:SetText(L["Value per point of each stat for this character (hit, crit, dodge ... per 1 %). 0 or empty = the stat does not count. Used while \"Custom weights\" is picked."])
+    d:SetText(L["Value per point of each stat for this character (hit, crit, dodge ... per 1 %). 0 or empty = the stat does not count. Used while \"Custom weights\" is picked."]
+      .. " " .. L["Weapon speed: per second; a negative value = faster weapons are better."])
     f.boxes = {}
     for i, st in ipairs(WEIGHT_STATS) do
       local col, rowN = (i - 1) % 2, math.floor((i - 1) / 2)
-      local x, y = 18 + col * 270, -66 - rowN * 25
+      local x, y = 18 + col * 270, -82 - rowN * 25
       local l = FLT.NewFS(f, nil, "OVERLAY", "GameFontHighlightSmall"); l:SetPoint("TOPLEFT", x, y - 4); l:SetText(L[st[2]])
       local eb = FLT.SkinBlizz(CreateFrame("EditBox", nil, f, "InputBoxTemplate"))
       eb:SetSize(60, 20); eb:SetPoint("TOPLEFT", x + 190, y); eb:SetAutoFocus(false); eb:SetMaxLetters(7)

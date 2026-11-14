@@ -3,7 +3,7 @@
 ## Notes: All-in-one WoW Forever companion: dungeons, quests, loot, item sets and reputation rewards, Library Books, professions, talent planning, hunter pets and quality of life helpers.
 ## Author: Smoergi
 ## X-License: GPL-3.0-or-later
-## Version: 6.2.4
+## Version: 6.2.7
 ## IconTexture: Interface\AddOns\OneForAll\Assets\minimap_icon
 ## OptionalDeps: Baganator
 ## SavedVariables: OneForAllDB, ForeverCompanionDB, ForeverLibraryTrackerDB
@@ -81,6 +81,8 @@ Data\WeaponTrainers.lua
 Data\PetTrainers.lua
 Data\ClassQuests.lua
 Data\ProfessionTrainers.lua
+Data\ProfessionFees.lua
+Data\ProfessionTools.lua
 Data\Armory.lua
 Data\DungeonMaps.lua
 Data\MapLandmarks.lua
@@ -89,10 +91,12 @@ Data\ZoneTransitions.lua
 Data\ZoneLevels.lua
 Data\MapOverlays.lua
 Data\QuestRewards.lua
+Data\SpecialQuests.lua
 Data\QuestPins.lua
 Data\QuestDrops.lua
 Data\GearWeights.lua
 Data\ItemSets.lua
+Data\Disenchant.lua
 Data\Enchants.lua
 DungeonData.lua
 Core.lua
@@ -118,6 +122,9 @@ UI\Books.lua
 UI\ProfessionRecipes.lua
 Data\VendorReagents.lua
 UI\CraftList.lua
+SkillUp.lua
+UI\SkillUpUI.lua
+UI\ProfitUI.lua
 UI\NodeGlow.lua
 UI\ProfessionGuild.lua
 UI\Professions.lua
@@ -140,5 +147,6 @@ MinimapCollector.lua
 UI\WhatsNew.lua
 UI\Welcome.lua
 UI\ChatHide.lua
+UI\KeyBindings.lua
 UI\VersionCheck.lua
 UI\InfoBar.lua

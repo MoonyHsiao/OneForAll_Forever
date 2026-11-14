@@ -6,6 +6,10 @@ local L = FLT.L or setmetatable({}, { __index = function(_, k) return k end }) -
 -- One switch, qol.guildMap (on, user 09.11.), for both ways: switched off you are not on the others' maps any more and
 -- you see nobody either (user: "wenn man es deaktiviert, sehen andere leute einen nicht mehr ..., man selbst sieht andere
 -- aber auch nicht mehr"). Only exact positions of OneForAll users, no zone markers for the others (user 09.11.).
+-- OpenMap (6.2.5, idea and code by CaptainBritish, public repo PR #63, user 10.11.): guildmates who share through OpenMap
+-- v0.8.3 (prefix "OpenMapLoc", "L1<tab>uiMapID<tab>x<tab>y<tab>CLASS<tab>level" with x / y 0..1, "L0" = stopped sharing)
+-- show the same way. Only received, nothing is sent in its format; kept apart (openMapMembers, forgotten after 150 s), and
+-- a fresh OneForAll message of the same player wins (also "inside a dungeon").
 -- Sent: your zone map and position, only when it changed (at most every 5 s), else every 60 s that you are still there;
 -- inside a dungeon / raid only which one ("I", user 09.11.: a green dot on its entrance, the names in its tooltip -
 -- MapLandmarks.lua asks GM.Inside); battlegrounds and unknown instances send "gone". Members in your group get no dot
@@ -19,6 +23,7 @@ local GM = {}
 FLT.MapGuild = GM
 
 local PREFIX = "OFAGuildPos"
+local OPENMAP_PREFIX, OPENMAP_FORGET = "OpenMapLoc", 150
 local SEND_EVERY, ALIVE_EVERY, FORGET = 5, 60, 180
 local SIZE, SIZE_CONT = 14, 10
 
@@ -27,7 +32,9 @@ local function now() return GetTime and GetTime() or 0 end
 local function on() return Q("guildMap") and IsInGuild and IsInGuild() and true or false end
 
 local members = {} -- [sender] = { map, x, y, cls, lvl, t, cont, world } or { inst = dungeon key, cls, lvl, t }
+local openMapMembers = {} -- keep each addon's location and stop-sharing messages independent
 GM._members = members -- tests
+GM._openMap = openMapMembers -- tests
 
 local TOKEN = string.format("%06x", math.random(0, 0xffffff)) -- this session's messages
 local lmDirty = false -- somebody went into / came out of a dungeon: the entrances need a redraw
@@ -91,6 +98,16 @@ local function isMe(sender)
   local short = Ambiguate and Ambiguate(sender, "short") or sender:match("^[^-]+")
   return short == me
 end
+local function setPosition(m, map, x, y, cls, lvl)
+  m.map, m.x, m.y, m.cls, m.lvl, m.t = map, x, y, cls, lvl, now()
+  -- where that is in the world, for other maps (the continent): once per message
+  m.cont, m.world = nil, nil
+  if C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D then
+    local ok, cont, world = pcall(C_Map.GetWorldPosFromMapPos, map, CreateVector2D(x, y))
+    if ok and cont and world then m.cont, m.world = cont, world end
+  end
+  refreshSoon()
+end
 function GM.Receive(msg, sender)
   if not Q("guildMap") or type(msg) ~= "string" or not sender or isMe(sender) then return end
   local kind = msg:sub(1, 1)
@@ -117,15 +134,27 @@ function GM.Receive(msg, sender)
   local m = members[sender] or {}
   members[sender] = m
   if m.inst then m.inst = nil; lmDirty = true end
-  m.map, m.x, m.y, m.cls, m.lvl, m.t = map, x / 10000, y / 10000, cls, tonumber(lvl), now()
-  -- where that is in the world, for other maps (the continent): once per message
-  m.cont, m.world = nil, nil
-  if C_Map and C_Map.GetWorldPosFromMapPos and CreateVector2D then
-    local ok, cont, world = pcall(C_Map.GetWorldPosFromMapPos, map, CreateVector2D(m.x, m.y))
-    if ok and cont and world then m.cont, m.world = cont, world end
-  end
-  refreshSoon()
+  setPosition(m, map, x / 10000, y / 10000, cls, tonumber(lvl))
 end
+
+local function receiveOpenMap(msg, sender)
+  if not on() or type(msg) ~= "string" or type(sender) ~= "string" or sender == "" or isMe(sender) then return end
+  if msg == "L0" then
+    if openMapMembers[sender] then openMapMembers[sender] = nil; refreshSoon() end
+    return
+  end
+  -- OpenMap v0.8.3 sends normalized decimal coordinates on the client's uiMapID.
+  local map, x, y, cls, lvl = msg:match("^L1\t(%d+)\t(%d+%.?%d*)\t(%d+%.?%d*)\t(%u*)\t(%d+)$")
+  map, x, y = tonumber(map), tonumber(x), tonumber(y)
+  if not (map and map > 0 and x and y and x <= 1 and y <= 1) then return end
+  if not (C_Map and C_Map.GetMapInfo) then return end
+  local ok, info = pcall(C_Map.GetMapInfo, map)
+  if not (ok and info) then return end
+  local m = openMapMembers[sender] or {}
+  openMapMembers[sender] = m
+  setPosition(m, map, x, y, cls, tonumber(lvl))
+end
+GM._ReceiveOpenMap = receiveOpenMap -- tests
 
 -- ---------------------------------------------------------------------------
 -- drawing (only while the map is open)
@@ -184,6 +213,19 @@ local function where(m, shown)
   if pos.GetXY then x, y = pos:GetXY() else x, y = pos.x, pos.y end
   if x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1 then return x, y end
 end
+local function drawMember(m, name, shown, child, w, h, scale, level, size)
+  if inGroup(name) then return end
+  local x, y = where(m, shown)
+  if not x then return end
+  local pin = acquire(child)
+  pin.m, pin.name = m, name
+  local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[m.cls]
+  pin.tex:SetVertexColor(c and c.r or 1, c and c.g or 1, c and c.b or 1)
+  pin:SetSize(size, size); pin:SetScale(scale); pin:SetFrameLevel(level + 1)
+  pin:ClearAllPoints()
+  pin:SetPoint("CENTER", child, "TOPLEFT", x * w / scale, -y * h / scale)
+  pin:Show()
+end
 function GM.Refresh()
   hideAll()
   if not (WorldMapFrame and WorldMapFrame:IsShown() and on()) then return end
@@ -197,18 +239,15 @@ function GM.Refresh()
   local size = info.mapType == CONT and SIZE_CONT or SIZE
   local t = now()
   for name, m in pairs(members) do
-    if m.map and t - (m.t or 0) <= FORGET and not inGroup(name) then
-      local x, y = where(m, shown)
-      if x then
-        local pin = acquire(child)
-        pin.m, pin.name = m, name
-        local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[m.cls]
-        pin.tex:SetVertexColor(c and c.r or 1, c and c.g or 1, c and c.b or 1)
-        pin:SetSize(size, size); pin:SetScale(scale); pin:SetFrameLevel(level + 1)
-        pin:ClearAllPoints()
-        pin:SetPoint("CENTER", child, "TOPLEFT", x * w / scale, -y * h / scale)
-        pin:Show()
-      end
+    if m.map and t - (m.t or 0) <= FORGET then
+      drawMember(m, name, shown, child, w, h, scale, level, size)
+    end
+  end
+  for name, m in pairs(openMapMembers) do
+    local native = members[name]
+    -- A fresh OneForAll report also takes precedence when it places the member inside a dungeon.
+    if t - m.t <= OPENMAP_FORGET and (not native or t - native.t > FORGET) then
+      drawMember(m, name, shown, child, w, h, scale, level, size)
     end
   end
 end
@@ -253,13 +292,18 @@ local function tick()
   for name, m in pairs(members) do
     if t - (m.t or 0) > FORGET then members[name] = nil; if m.inst then lmDirty = true end end
   end
+  for name, m in pairs(openMapMembers) do
+    if t - m.t > OPENMAP_FORGET then openMapMembers[name] = nil end
+  end
   sendPosition()
   if WorldMapFrame and WorldMapFrame:IsShown() then redraw() end
 end
 local ev = CreateFrame("Frame")
 ev:SetScript("OnEvent", function(_, event, prefix, msg, channel, sender)
   if event == "CHAT_MSG_ADDON" then
-    if prefix == PREFIX and channel == "GUILD" then GM.Receive(msg, sender) end
+    if channel ~= "GUILD" then return end
+    if prefix == PREFIX then GM.Receive(msg, sender)
+    elseif prefix == OPENMAP_PREFIX then receiveOpenMap(msg, sender) end
   elseif event == "PLAYER_GUILD_UPDATE" or event == "PLAYER_ENTERING_WORLD" then
     GM.Apply()
   end
@@ -269,7 +313,9 @@ local hooked, registered
 function GM.Apply()
   if on() then
     if not registered and C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
-      registered = true; pcall(C_ChatInfo.RegisterAddonMessagePrefix, PREFIX)
+      registered = true
+      pcall(C_ChatInfo.RegisterAddonMessagePrefix, PREFIX)
+      pcall(C_ChatInfo.RegisterAddonMessagePrefix, OPENMAP_PREFIX)
     end
     ev:RegisterEvent("CHAT_MSG_ADDON")
     if not ticker and C_Timer and C_Timer.NewTicker then
@@ -290,6 +336,7 @@ function GM.Apply()
     pcall(ev.UnregisterEvent, ev, "CHAT_MSG_ADDON")
     if next(members) then lmDirty = true end
     wipe(members)
+    wipe(openMapMembers)
   end
   redraw()
 end

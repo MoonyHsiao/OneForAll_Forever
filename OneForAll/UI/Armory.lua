@@ -266,6 +266,179 @@ local function scrollList(parent, width)
   return sf
 end
 
+-- SPECIAL QUESTS (6.2.5, user 11.11.2026: "Special Quests" as an extra list entry - quest chains with an unusual
+-- reward, like the paladin sword). Data/SpecialQuests.lua (QuestieDB Forever). Chains of the other faction are not
+-- shown; class chains of other classes are greyed. Left: the chains with the steps done; right: rewards and the steps
+-- with the giver, the place (map button) and a check for every quest done.
+local function createQuestView(body)
+  local view = CreateFrame("Frame", nil, body); view:SetAllPoints(); view:Hide()
+  local data = FLT.SPECIAL_QUESTS or { chains = {}, quests = {} }
+  local LIST_W, ROW_W, DW = 262, 258, 452
+  local left = CreateFrame("Frame", nil, view); left:SetPoint("TOPLEFT"); left:SetPoint("BOTTOMLEFT"); left:SetWidth(300)
+  UI.Column(left, 4)
+  local lsf = scrollList(left, LIST_W)
+  local right = CreateFrame("Frame", nil, view); right:SetPoint("TOPLEFT", 308, 0); right:SetPoint("BOTTOMRIGHT")
+  local dsf = FLT.SkinBlizz(CreateFrame("ScrollFrame", nil, right, "UIPanelScrollFrameTemplate"))
+  dsf:SetPoint("TOPLEFT", 14, -12); dsf:SetPoint("BOTTOMRIGHT", -28, 10)
+  local detail = CreateFrame("Frame", nil, dsf); detail:SetSize(DW, 1); dsf:SetScrollChild(detail)
+  UI.AutoHideScrollBar(dsf)
+
+  local function quest(id, c)
+    local s = data.quests[id]; if not s then return nil end
+    local name, lv, giver, map, x, y = strsplit("|", s)
+    local at = c and c.at and c.at[id] -- this chain starts the quest somewhere else (the other faction's half of the map)
+    if at then giver, map, x, y = strsplit("|", at) end
+    return { id = id, name = name, lv = tonumber(lv), giver = giver ~= "" and giver or nil, map = tonumber(map), x = tonumber(x), y = tonumber(y) }
+  end
+  local function ids(str) local t = {} for v in tostring(str or ""):gmatch("%d+") do t[#t + 1] = tonumber(v) end return t end
+  local function title(c) return type(c.n) == "number" and itemName(c.n) or (FLT.Name and FLT.Name(c.n) or c.n) end
+  local function mine(c) return not c.cls or c.cls == playerClass() end
+  local function doneCount(c)
+    local n, all = 0, ids(c.q)
+    for _, id in ipairs(all) do if FLT:IsQuestDone(id) then n = n + 1 end end
+    return n, #all
+  end
+  local function zoneName(map)
+    local mi = map and type(C_Map) == "table" and type(C_Map.GetMapInfo) == "function" and C_Map.GetMapInfo(map)
+    return type(mi) == "table" and mi.name or nil
+  end
+  local function quality(id)
+    local q = C_Item and C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(id)
+    if not q and GetItemInfo then q = select(3, GetItemInfo(id)) end
+    return q
+  end
+
+  local selected
+  local rows, steps, items = {}, {}, {}
+  local render -- forward
+  -- user 11.11.2026: a hint under the list that more chains will come
+  local more = newText(lsf.child, "GameFontHighlightSmall", ROW_W - 10, DIM); more:SetText(L["More to come..."])
+  local function row(i)
+    local r = rows[i]; if r then return r end
+    r = CreateFrame("Button", nil, lsf.child); r:SetSize(ROW_W, 42)
+    r.card = UI.CardRow(r)
+    r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(28, 28); r.icon:SetPoint("LEFT", 6, 0)
+    r.name = newText(r, "GameFontHighlight", ROW_W - 50); r.name:SetPoint("TOPLEFT", 42, -6)
+    r.sub = newText(r, "GameFontHighlightSmall", ROW_W - 50, DIM); r.sub:SetPoint("TOPLEFT", 42, -23)
+    r:SetScript("OnClick", function(self) selected = self.c; view:Refresh(true) end)
+    rows[i] = r
+    return r
+  end
+  local dTitle = newText(detail, "GameFontNormalLarge", DW - 10, GOLD); dTitle:SetPoint("TOPLEFT", 2, -2); setFontSize(dTitle, 17)
+  local dSub = newText(detail, "GameFontHighlightSmall", DW - 10, TEXT); dSub:SetPoint("TOPLEFT", 2, -26)
+  local rewTitle = UI.SectionTitle(detail, L["Rewards"], 2, -50, -6)
+  local stepTitle = UI.SectionTitle(detail, L["Steps"], 2, -120, -6)
+  local function itemRow(i)
+    local r = items[i]; if r then return r end
+    r = CreateFrame("Button", nil, detail); r:SetSize(DW - 4, 34)
+    r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    r.card = UI.CardRow(r)
+    r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(26, 26); r.icon:SetPoint("LEFT", 5, 0)
+    r.name = newText(r, "GameFontHighlight", DW - 90); r.name:SetPoint("LEFT", 38, 0)
+    r.check = r:CreateTexture(nil, "OVERLAY"); r.check:SetSize(16, 16); r.check:SetPoint("RIGHT", -40, 0)
+    r.check:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+    r.star = UI.WishStar(r); r.star:SetPoint("RIGHT", -10, 0)
+    r:SetHitRectInsets(0, 36, 0, 0)
+    r:SetScript("OnEnter", function(self) itemTooltip(self, self.id, self.itName) end)
+    r:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    r:SetScript("OnClick", function(self, button) itemClick(self.id, self.itName, nil, quality(self.id), button) end)
+    items[i] = r
+    return r
+  end
+  local function stepRow(i)
+    local r = steps[i]; if r then return r end
+    r = CreateFrame("Frame", nil, detail); r:SetSize(DW - 4, 38)
+    r.card = UI.CardRow(r)
+    r.num = newText(r, "GameFontNormal", 22, GOLD); r.num:SetPoint("LEFT", 6, 0); r.num:SetJustifyH("CENTER")
+    r.name = newText(r, "GameFontHighlight", DW - 130); r.name:SetPoint("TOPLEFT", 34, -5)
+    r.sub = newText(r, "GameFontHighlightSmall", DW - 130, DIM); r.sub:SetPoint("TOPLEFT", 34, -21)
+    r.check = r:CreateTexture(nil, "OVERLAY"); r.check:SetSize(16, 16); r.check:SetPoint("RIGHT", -76, 0)
+    r.check:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+    r.map = UI.GoldButton(r, L["Map"], 64, 20, UI.ASSET_ROOT .. "icon_map", 11); r.map:SetPoint("RIGHT", -6, 0)
+    steps[i] = r
+    return r
+  end
+  local note = newText(detail, "GameFontDisableSmall", DW - 10); note:SetWordWrap(true)
+
+  render = function(c)
+    local done, total = doneCount(c)
+    dTitle:SetText(title(c))
+    local bits = { string.format(L["Level %d"], c.lv or 1) }
+    if c.side then bits[#bits + 1] = c.side == "A" and L["Alliance"] or L["Horde"] end
+    if c.cls then bits[#bits + 1] = className(c.cls) end
+    bits[#bits + 1] = string.format(L["%d / %d quests done"], done, total)
+    dSub:SetText(table.concat(bits, "  ·  "))
+    local y = -50
+    rewTitle:ClearAllPoints(); rewTitle:SetPoint("TOPLEFT", 2, y); y = y - 28
+    for _, r in ipairs(items) do r:Hide() end
+    for i, id in ipairs(ids(c.r)) do
+      local r = itemRow(i); r:ClearAllPoints(); r:SetPoint("TOPLEFT", 0, y); r:Show(); y = y - 37
+      r.id = id; r.itName = itemName(id)
+      setItemIcon(r.icon, id); r.name:SetText(r.itName); r.name:SetTextColor(qualityColor(quality(id)))
+      r.star:SetItem(id); r.check:SetShown(ownedWhere(id) ~= nil)
+    end
+    y = y - 8
+    stepTitle:ClearAllPoints(); stepTitle:SetPoint("TOPLEFT", 2, y); y = y - 28
+    for _, r in ipairs(steps) do r:Hide() end
+    for i, id in ipairs(ids(c.q)) do
+      local q = quest(id, c)
+      if q then
+        local r = stepRow(i); r:ClearAllPoints(); r:SetPoint("TOPLEFT", 0, y); r:Show(); y = y - 41
+        local isDone = FLT:IsQuestDone(id)
+        r.num:SetText(i)
+        r.name:SetText(FLT.Name and FLT.Name(q.name) or q.name)
+        r.name:SetTextColor(FLT.SkinC(unpack(isDone and DIM or TEXT)))
+        local zone = zoneName(q.map)
+        local who = q.giver and (FLT.Name and FLT.Name(q.giver) or q.giver) or "?"
+        r.sub:SetText(who .. (zone and ("  ·  " .. zone .. (q.x and string.format(" (%.1f, %.1f)", q.x, q.y) or "")) or ""))
+        r.check:SetShown(isDone)
+        if q.map and q.x then
+          r.map:Show(); r.map:SetScript("OnClick", function() FLT:ShowOnMap({ mapID = q.map, x = q.x, y = q.y, zone = zone, name = who }) end)
+        else r.map:Hide() end
+      end
+    end
+    note:ClearAllPoints(); note:SetPoint("TOPLEFT", 2, y - 6)
+    note:SetText(L["A green check marks the quests you have done and the rewards you own. Map: where the quest starts."])
+    y = y - 44
+    detail:SetHeight(-y)
+  end
+
+  function view:Refresh(keepScroll)
+    for _, r in ipairs(rows) do r:Hide() end
+    local list = {}
+    for _, c in ipairs(data.chains) do if sideOK(c) then list[#list + 1] = c end end
+    -- the chains for the own class first, then by level
+    table.sort(list, function(a, b)
+      local ma, mb = mine(a), mine(b)
+      if ma ~= mb then return ma end
+      return (a.lv or 0) < (b.lv or 0)
+    end)
+    local sel
+    for _, c in ipairs(list) do if c == selected then sel = c end end
+    sel = sel or list[1]; selected = sel
+    local y = -2
+    for i, c in ipairs(list) do
+      local r = row(i); r:ClearAllPoints(); r:SetPoint("TOPLEFT", 0, y); r:Show(); y = y - 45
+      r.c = c
+      local main = ids(c.r)[1]
+      if main then setItemIcon(r.icon, main) else r.icon:SetTexture("Interface\\Icons\\INV_Misc_Note_01") end
+      r.name:SetText(title(c))
+      r.name:SetTextColor(FLT.SkinC(unpack(mine(c) and TEXT or DIM)))
+      FLT.Desat(r.icon, not mine(c))
+      local done, total = doneCount(c)
+      local sub = string.format(L["Level %d"], c.lv or 1)
+      if c.cls then sub = sub .. "  ·  " .. className(c.cls) end
+      r.sub:SetText(sub .. "  ·  " .. (done >= total and ("|cff66dd66" .. L["Done"] .. "|r") or string.format("%d / %d", done, total)))
+      r.card:SetSelected(c == sel)
+    end
+    more:ClearAllPoints(); more:SetPoint("TOPLEFT", 8, y - 4); y = y - 24
+    lsf.child:SetHeight(math.max(1, -y))
+    if not keepScroll then lsf:SetVerticalScroll(0) end
+    if sel then render(sel) end
+  end
+  return view
+end
+
 local function createArmoryPanel(parent)
   local panel = CreateFrame("Frame", nil, parent)
   UI.PlacePanel(panel, parent)
@@ -875,14 +1048,17 @@ local function createArmoryPanel(parent)
   -- GEAR PLANNER (UI/GearPlanner.lua) -----------------------------------------
   local gear = UI.CreateGearPlanner(body)
   views.gear = gear
+  local questView = createQuestView(body)
+  views.quests = questView
 
   -- NAVIGATION ---------------------------------------------------------------
   show = function(key)
     current = key
     hideViews(); setNav(key)
-    filterBar:SetShown(key ~= "rep" and key ~= "gear")
+    filterBar:SetShown(key ~= "rep" and key ~= "gear" and key ~= "quests")
     if key == "gear" then gear:Show(); gear:Refresh()
     elseif key == "rep" then repView:Show(); refreshRep()
+    elseif key == "quests" then questView:Show(); questView:Refresh()
     else
       local tabs = TABS[key] ~= nil
       tabBar:SetShown(tabs)
@@ -890,7 +1066,7 @@ local function createArmoryPanel(parent)
       setView:ClearAllPoints(); setView:SetPoint("TOPLEFT", 0, tabs and -68 or -36); setView:SetPoint("BOTTOMRIGHT", 0, 0)
       setView:Show(); refreshSets()
     end
-    if key == "gear" or key == "rep" then tabBar:Hide() end
+    if key == "gear" or key == "rep" or key == "quests" then tabBar:Hide() end
   end
   local navY = navTop
   local function navButton(key, label, icon)
@@ -905,6 +1081,10 @@ local function createArmoryPanel(parent)
   for _, g in ipairs(GROUPS) do navButton(g.key, L[g.label], g.icon) end
   divider()
   navButton("rep", L["Reputation"], "Interface\\Icons\\INV_Misc_Note_02")
+  do -- 6.2.x (TODO.md "Neu-Markierungen")
+    local b = navButton("quests", L["Special Quests"], "Interface\\Icons\\INV_Scroll_03")
+    local m = UI.NewMark(b, L["New in this version."]); m:SetPoint("RIGHT", b, "RIGHT", -6, 0)
+  end
   divider()
   for _, l in ipairs({ { N"Mounts", "Interface\\Icons\\Ability_Mount_RidingHorse" }, { N"Legendaries", "Interface\\Icons\\INV_Staff_Medivh" } }) do
     local b; b, navY = UI.NavEntry(nav, navY, L[l[1]], l[2])
@@ -919,7 +1099,7 @@ local function createArmoryPanel(parent)
     pending = false
     local changed = gearChanged; gearChanged = false
     if not panel:IsVisible() then return end
-    if current == "rep" then refreshRep(true) elseif current == "gear" then gear:Refresh(changed) elseif current then refreshSets(true) end
+    if current == "rep" then refreshRep(true) elseif current == "quests" then questView:Refresh(true) elseif current == "gear" then gear:Refresh(changed) elseif current then refreshSets(true) end
   end
   local ev = CreateFrame("Frame", nil, panel)
   ev:RegisterEvent("GET_ITEM_INFO_RECEIVED")
@@ -927,6 +1107,7 @@ local function createArmoryPanel(parent)
   ev:RegisterEvent("BAG_UPDATE_DELAYED")
   ev:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
   ev:RegisterEvent("UPDATE_FACTION")
+  ev:RegisterEvent("QUEST_TURNED_IN") -- the checks of the special quests
   ev:SetScript("OnEvent", function(_, event, _, success)
     if event == "PLAYER_EQUIPMENT_CHANGED" then gearChanged = true end
     if event == "ITEM_DATA_LOAD_RESULT" and not success then return end -- a failed load: no redraw (it would ask again)

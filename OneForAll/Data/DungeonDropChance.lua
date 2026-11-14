@@ -4,9 +4,27 @@ local _, FLT = ...
 -- foreverchanges.pro loot tables (Classic data, originally Wowhead). Forever
 -- can differ; new Forever bosses and items have none. October 2026.
 FLT.DUNGEON_DROP_CHANCE = {
+  -- Alcaz Prison: Forever drop chances from the Wowhead Forever NPC pages (112 - 166 kills each), 13.11.2026
+  ["Alcaz Prison"] = {
+    ["Overseer Wrex"] = {[276732]=32, [276733]=33, [276734]=33},
+    ["Tidemistress Ca'zass"] = {[276735]=33, [276736]=30, [276737]=33},
+    ["Katerina the Cleaner"] = {[276738]=27, [276739]=42, [276740]=31},
+    ["The Questioner"] = {[276741]=32, [276742]=30, [276743]=38},
+    ["Blazeroar"] = {[276744]=33, [276745]=34, [276746]=34},
+  },
+  -- Krol'dok Stronghold: Forever drop chances from the Wowhead Forever NPC pages (239 - 333 kills each), 13.11.2026
+  ["Krol'dok Stronghold"] = {
+    ["Slavecrusher Grox"] = {[274995]=35, [274996]=29, [274997]=36},
+    ["Twilight Commander Zarmok"] = {[274998]=32, [274999]=33, [275000]=33},
+    ["War Handler Ashka"] = {[275001]=40, [275002]=33, [275003]=27},
+    ["Nar'gurk"] = {[275004]=36, [275005]=27, [275006]=30},
+    ["Overlord Mugg"] = {[275007]=22, [275008]=24, [275009]=20, [275010]=29},
+    ["Bossman Toof"] = {[286428]=33, [286429]=34, [286430]=33},
+  },
   -- City of Dalaran: Forever drop chances from the Wowhead Forever NPC pages (300 - 750 kills each), 08.11.2026
   ["City of Dalaran"] = {
     ["Arcane Anomaly"] = {[273031]=35, [273034]=33, [273035]=32},
+    ["Arcanic Enigma"] = {[273043]=30, [273044]=33, [273045]=37}, -- 1990 kills, 13.11.2026
     ["Fel Ancient"] = {[273037]=28, [273038]=36, [273039]=36},
     ["Mana Devourer"] = {[273040]=32, [273041]=33, [273042]=35},
     ["Unstable Sentinel"] = {[273046]=36, [273047]=33, [273048]=30, [273099]=10},

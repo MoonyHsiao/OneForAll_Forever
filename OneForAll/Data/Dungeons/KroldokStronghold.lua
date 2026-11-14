@@ -3,6 +3,8 @@ local _, FLT = ...
 -- Krol'dok Stronghold: location and story (Blizzard at BlizzCon / PAX Australia via foreverchanges.pro); October 2026.
 -- Bosses from the Forever client (DungeonEncounter, wago.tools 1.60.1.70862), NPC IDs and item IDs from Wowhead Forever,
 -- loot from wowtbc.gg (08.11.2026, still being discovered); tools/dungeon-check.
+-- 13.11.2026 (6.2.7-beta6): boss names, NPC IDs, portraits (displayID), creature types and loot from the Wowhead Forever NPC pages
+-- (tools/dungeon-check/apply_wowhead.py); boss levels are known nowhere yet - learned in game when a boss is targeted.
 FLT.DUNGEON_REGISTRY["Krol'dok Stronghold"] = {
     level = "40-47",
     location = "Riverglades",
@@ -126,43 +128,90 @@ FLT.DUNGEON_REGISTRY["Krol'dok Stronghold"] = {
         {
             name = "Slavecrusher Grox",
             npcID = 258966,
+            displayID = 141217,
             loot = {
                 {274996, "Resistance Breaker Spaulder", "Shoulder, Mail", 3},
+                {274995, "Slavecrusher Scepter", "One-Hand, Mace", 3},
+                {274997, "Chain of Binding", "Waist, Mail", 3},
             },
         },
         {
             name = "Twilight Commander Zarmok",
             npcID = 258972,
+            displayID = 141219,
             loot = {
                 {274998, "Shadowlight Athame", "Main Hand, Dagger", 3},
+                {274999, "Shadecaster's Leggings", "Legs, Cloth", 3},
+                {275000, "Zarmok's Plated Signet", "Finger", 3},
             },
         },
         {
-            name = "Handler Ashka",
+            name = "War Handler Ashka",
             npcID = 259281,
-            aliases = {"War Handler Ashka"},
-            loot = {},
+            fallbackIcon = "Interface\\Icons\\INV_Misc_Head_Orc_01", -- the client cannot draw its model (13.11.2026)
+            aliases = {"Handler Ashka"},
+            loot = {
+                {275001, "Bloodied Gutslicer", "Two-Hand, Sword", 3},
+                {275002, "War Handler's Gaze", "Head, Leather", 3},
+                {275003, "Worgbinder's Treads", "Feet, Plate", 3},
+            },
         },
         {
             name = "Nar'gurk",
             npcID = 258964,
+            displayID = 141215,
             loot = {
                 {275004, "Chain of the Corruptor", "Neck", 3},
+                {275005, "Krol'dok Warplate Chest", "Chest, Plate", 3},
+                {275006, "Krol'dok Warplate Helmet", "Head, Plate", 3},
             },
         },
         {
-            name = "Overseer Mugg",
-            aliases = {"Overlord Mugg"},
+            name = "Overlord Mugg",
+            npcID = 258968,
+            fallbackIcon = "Interface\\Icons\\INV_Misc_Bone_OrcSkull_01", -- the client cannot draw its model (13.11.2026)
+            aliases = {"Overseer Mugg"},
             loot = {
                 {275009, "Emblem of Slamming", "Trinket", 3},
+                {275007, "Mugg's Jabber", "One-Hand, Fist Weapon", 3},
+                {275008, "Mugg's Crosser", "One-Hand, Fist Weapon", 3},
+                {275010, "Strongly Scented Hood", "Head, Cloth", 3},
             },
         },
         {
             name = "Bossman Toof",
             npcID = 264773,
+            displayID = 14424,
             loot = {
                 {286429, "Big-Belly Belt", "Waist, Cloth", 3},
+                {286428, "Band of Bossman", "Finger", 3},
+                {286430, "Toofbreaker", "One-Hand, Mace", 3},
             },
         },
+        {
+            -- rare elite (Wowhead Forever NPC 262716: drops 279857 / 279863, item level 43; in Krol'dok per the user's source)
+            name = "Kroog",
+            npcID = 262716,
+            displayID = 17273,
+            rare = true,
+            loot = {
+                {279857, "Kroog's Backscratcher", "One-Hand, Dagger", 3},
+                {279863, "Black Horn Necklace", "Neck", 3},
+            },
+        },
+    },
+    -- trash: blue bind-on-equip drops of the dungeon's enemies - Wowhead Forever, one item ID block per new dungeon
+    -- (several confirmed by "Dropped by" a mob of this dungeon), 13.11.2026
+    trashLoot = {
+        {287007, "Stretched Footpads", "Feet, Cloth", 3},
+        {287008, "Ogre Magi's Mantle", "Shoulder, Cloth", 3},
+        {287009, "Twilight Enforcer's Legs", "Legs, Leather", 3},
+        {287010, "Outrider's Gloves", "Hands, Leather", 3}, -- Dropped by: Twilight Outrider
+        {287011, "Guise of Battle", "Head, Mail", 3},
+        {287012, "Krol'dok Warplate Gauntlets", "Hands, Plate", 3},
+        {287013, "Krol'dok Warplate Legplates", "Legs, Plate", 3},
+        {287014, "Krol'dok Warplate Pauldrons", "Shoulder, Plate", 3},
+        {287015, "Supreme Smasher", "Two-Hand, Mace", 3},
+        {287016, "Shadow-Seer Orb", "Held In Off-Hand", 3},
     },
 }

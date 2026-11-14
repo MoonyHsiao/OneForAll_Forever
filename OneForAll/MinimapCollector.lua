@@ -31,7 +31,9 @@ local SKIP_PREFIX = {
   "ExpansionLandingPage", "LFGMinimap", "BattlefieldMinimap", "AddonCompartment", "HelpOpenWeb",
   "FeedbackUIButton", "OneForAll",
 }
-local SKIP_WORD = { "Pin", "Questie", "HandyNotes", "GatherMate", "TomTom", "Arrow", "Ping", "Blip", "Node", "Icon%d+$" }
+-- "^TTMinimapButton": TomTom's waypoint pins on the minimap (6.2.5, Discord franknol 10.11.: a waypoint landed in our bar)
+local SKIP_WORD = { "Pin", "Questie", "HandyNotes", "GatherMate", "TomTom", "^TTMinimapButton", "Arrow", "Ping", "Blip", "Node",
+  "Icon%d+$" }
 
 local function qol() return FLT.QoL end
 local function enabled() return qol() and qol().Get("mmCollect") and true or false end
@@ -46,6 +48,7 @@ local function isCandidate(f)
   if f.IsForbidden and f:IsForbidden() then return false end
   local name = f.GetName and f:GetName()
   if type(name) ~= "string" or name == "" then return false end
+  if name == "LibDBIcon10_OneForAll" then return false end -- our own (Minimap.lua, with Leatrix Plus)
   if name:find("^LibDBIcon10_") then return true end
   -- D4Lib buttons (MapUtils, ImproveAny ... by D4KiR): "MinimapButton_D4Lib_LibDBIcon_<name>"; they start with
   -- "Minimap" and fell through SKIP_PREFIX (user 25.10.)
@@ -217,6 +220,7 @@ local function create()
   collector:SetScript("OnClick", function(_, mouse)
     if mouse == "RightButton" then
       if IsShiftKeyDown and IsShiftKeyDown() then if FLT.CraftList then FLT.CraftList.Toggle() end -- user 24.10.
+      elseif IsAltKeyDown and IsAltKeyDown() then if FLT.SkillUp and FLT.SkillUp.ToggleLastGuide then FLT.SkillUp.ToggleLastGuide() end
       elseif FLT.ToggleUI then FLT:ToggleUI() end
       return
     end
@@ -230,6 +234,7 @@ local function create()
     GameTooltip:AddLine(L["Left-click: Minimap buttons"], 1, 1, 1)
     GameTooltip:AddLine(L["Right-click: Open / close OneForAll"], 1, 1, 1)
     GameTooltip:AddLine(L["Shift-right-click: Crafting List"], 1, 1, 1)
+    GameTooltip:AddLine(L["Alt-right-click: last Skill-Up guide"], 1, 1, 1)
     GameTooltip:AddLine(L["Drag: Move"], 0.75, 0.75, 0.75)
     GameTooltip:Show()
   end)
@@ -240,10 +245,12 @@ end
 -- switch on / off (also called after login and when our own minimap button is made)
 function FLT.MinimapCollectorRefresh()
   local own = FLT.minimapButton
+  local ldbi = FLT.ldbIcon -- the LibDBIcon button for Leatrix Plus (Minimap.lua): replaces ours
   if enabled() then
     create()
     collector:Show()
     if own then own:Hide() end
+    if ldbi then pcall(ldbi.Hide, ldbi, "OneForAll") end
     scan()
   else
     if bar then bar:Hide() end
@@ -251,7 +258,11 @@ function FLT.MinimapCollectorRefresh()
     for _, f in ipairs(sortedFrames()) do release(f) end
     -- QoL "mmHide" (5.7.3, user 23.10., off by default): no button of ours at the minimap; OneForAll stays
     -- reachable from the game's AddOns list at the minimap and /ofa. With the collector on, its button stays.
-    if own then own:SetShown(not (qol() and qol().Get("mmHide"))) end
+    local show = not (qol() and qol().Get("mmHide"))
+    if ldbi then
+      if own then own:Hide() end
+      pcall(show and ldbi.Show or ldbi.Hide, ldbi, "OneForAll")
+    elseif own then own:SetShown(show) end
   end
 end
 

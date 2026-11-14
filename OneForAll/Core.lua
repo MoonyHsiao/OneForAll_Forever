@@ -62,6 +62,48 @@ function FLT.IsSecret(...)
   return false
 end
 
+-- [charkey] (tools/tests/charkey.lua loads this block)
+-- Account-wide data per character (gold of the info bar, recipes and stock of the alts). 6.2.5 (user 11.11.2026): on WoW
+-- Forever characters share a first name (surnames: "Smörgi Rogue", "Smörgi Hunt"; UnitName gives "Smörgi" only), so the
+-- old key "Name-Realm" made all of them one character -> the key is the GUID, name / realm / class are stored in the
+-- entry. Old entries ("Name-Realm", info bar "Realm|Name") are still read; a character drops its old one when it saves.
+local function oldKey()
+  local n = UnitName and UnitName("player")
+  return n and (n .. "-" .. (GetRealmName and GetRealmName() or "")) or nil
+end
+function FLT.CharKey() return (UnitGUID and UnitGUID("player")) or oldKey() end
+function FLT.IsMyChar(key) return key == FLT.CharKey() or key == oldKey() end
+-- name, realm, class token of an entry
+function FLT.CharOf(key, d)
+  local t = type(d) == "table"
+  if t and d.name then return d.name, d.realm, d.class or d[2] end
+  local r, n = tostring(key):match("^(.-)|(.*)$")
+  if not r then n, r = tostring(key):match("^(.-)%-(.*)$") end
+  return n or key, r, t and (d.class or d[2]) or nil
+end
+-- save this character's entry d in tbl (stamps name, realm, class; removes its old key)
+function FLT.CharSave(tbl, d, legacy)
+  local key = FLT.CharKey(); if not key then return end
+  local _, cls = UnitClass("player")
+  d.name, d.realm, d.class = UnitName("player"), GetRealmName and GetRealmName() or "", cls
+  if type(OneForAllCharDB) == "table" and OneForAllCharDB.fullName then d.full = OneForAllCharDB.fullName end -- with surname
+  tbl[key] = d
+  local old = legacy or oldKey()
+  if old and old ~= key then tbl[old] = nil end
+end
+-- the name to show; with the class when another of my characters (or this one) has the same name
+function FLT.CharLabel(tbl, key, d)
+  local name, _, cls = FLT.CharOf(key, d)
+  local dup = name == (UnitName and UnitName("player"))
+  if not dup then
+    for k, o in pairs(tbl) do if k ~= key and FLT.CharOf(k, o) == name then dup = true; break end end
+  end
+  if dup and type(d) == "table" and d.full and d.full ~= name then return d.full end -- "Smörgi Banklshofer"
+  local cn = dup and cls and LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[cls]
+  return cn and (name .. " (" .. cn .. ")") or name
+end
+-- [/charkey]
+
 local function numSlots(bag)
   if C_Container and C_Container.GetContainerNumSlots then return C_Container.GetContainerNumSlots(bag) or 0 end
   if GetContainerNumSlots then return GetContainerNumSlots(bag) or 0 end
@@ -140,10 +182,11 @@ function FLT:GetCounts()
   local done, owned = 0, 0
   for _, b in ipairs(self.BOOKS) do
     local s = self:GetBookState(b)
-    if s == "done" then
+    -- "manual" = marked as turned in by hand (6.2.6, user 12.11.: turned in before OneForAll was installed - it counts)
+    if s == "done" or s == "manual" then
       done = done + 1
       owned = owned + 1
-    elseif s == "manual" or s == "bag" or s == "bank" then
+    elseif s == "bag" or s == "bank" then
       owned = owned + 1
     end
   end
@@ -340,6 +383,8 @@ SlashCmdList.ONEFORALL = function(cmd)
     if UpdateAddOnMemoryUsage then UpdateAddOnMemoryUsage() end
     local kb = get and get("OneForAll")
     if kb then msg(string.format(L["Memory: %.1f MB (includes garbage the game has not cleaned up yet)."], kb / 1024)) end
+  elseif cmd == "gv" or cmd:match("^gv%s") then
+    if FLT.GearValue then FLT.GearValue.Debug(cmd:match("(item:[%-%d:]+)")) end
   elseif cmd == "trainer" then
     if FLT.PrintTrainerDebug then FLT.PrintTrainerDebug() end
   elseif cmd == "buttons" then
