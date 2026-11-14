@@ -2,10 +2,11 @@ local _, FLT = ...
 local L = FLT.L or setmetatable({}, { __index = function(_, k) return k end }) -- (tests without Locales)
 
 -- Gear Planner "Value" (5.6.3): sum of the item's stats x the stat weights of the active spec (the talent tree
--- with the most points; user 16.10.: standard specs only, no choice yet). Weights: Data/GearWeights.lua (Sharpie's
--- Gear Judge, MIT): level 60 = the raid profile, below 60 = the spec's leveling curve at the player's level,
+-- with the most points; user 16.10.: standard specs only, no choice yet). Weights: Data/GearWeights.lua (SimGear
+-- Forever + our overrides, 6.2.6): level 60 = the raid profile, below 60 = the spec's leveling curve at the player's level,
 -- no talents = the class's general leveling curve. Ratings are turned into % first (GEAR_RATING).
--- Compared with what is worn: rings / trinkets with the weaker one, two-handers with main + off hand.
+-- Compared with what is worn: rings / trinkets with the weaker one, two-handers with main + off hand; the % is of
+-- the whole gear's Value (6.2.5).
 -- Lean: weights are built once per spec / level / talent change, item values are cached per item and slot,
 -- worn values per slot until the gear changes. Nothing runs until a tooltip or the planner asks.
 
@@ -20,6 +21,8 @@ local values = {}  -- [slot][itemID] = value
 local worn = {}    -- [slot] = value of the worn item (false = empty)
 local speeds = {}  -- [itemID] = weapon speed (tooltip data)
 local classOK = {} -- [itemID] = false when the item has "Classes: ..." without the player's class
+local gearSum      -- Value of everything worn (6.2.5: the % is against the whole gear); nil = count again
+local function resetWorn() wipe(worn); gearSum = nil end
 
 local function curveAt(curve, level)
   local n = #curve
@@ -42,6 +45,14 @@ local function curveAt(curve, level)
   return out
 end
 
+-- own weights from before 6.2.5 had no melee / off-hand DPS fields: they count as before (dps; off hand half of it)
+local function migrateCustom(c)
+  if OneForAllCharDB.gearCustomV then return end
+  if c.dpsmelee == nil then c.dpsmelee = tonumber(c.dps) end
+  if c.dpsoh == nil and c.dpsmelee then c.dpsoh = c.dpsmelee * 0.5 end
+  OneForAllCharDB.gearCustomV = 2
+end
+
 local function buildWeights()
   local _, cls = UnitClass("player")
   local data = FLT.GEAR_WEIGHTS and FLT.GEAR_WEIGHTS[cls]
@@ -56,9 +67,15 @@ local function buildWeights()
   -- own weights (5.7.3, Discord sparkledooks, user 27.10.): OneForAllCharDB.gearCustom, edited in the planner
   local custom = pick == "custom" and type(OneForAllCharDB.gearCustom) == "table" and OneForAllCharDB.gearCustom
   if custom then
-    local w = {}; for k, v in pairs(custom) do if tonumber(v) then w[k] = tonumber(v) end end
+    migrateCustom(custom)
+    -- only what the editor shows counts (6.2.5: hidden keys of the copied spec - melee / off-hand weapon DPS, speed,
+    -- health - counted although the editor did not show them; its "Weapon DPS" did nothing on melee weapons)
+    local w = {}
+    for _, st in ipairs(FLT.GEAR_CUSTOM_STATS or {}) do local v = tonumber(custom[st[1]]); if v then w[st[1]] = v end end
+    -- melee weapon DPS only from its own fields (no fallback to the ranged / wand "dps")
+    w.dpsmelee, w.dpsoh = w.dpsmelee or 0, w.dpsoh or 0
     W, specName = w, "Custom"
-    wipe(values); wipe(worn)
+    wipe(values); resetWorn()
     return
   end
   if pick and data.specs[pick] then tree = pick end
@@ -73,7 +90,7 @@ local function buildWeights()
   -- Forever has one hit and one crit rating for melee and spells (as Gear Judge does)
   w.hit = math.max(w.hit or 0, w.shit or 0); w.crit = math.max(w.crit or 0, w.scrit or 0)
   W, specName = w, spec and spec.name or "Leveling"
-  wipe(values); wipe(worn)
+  wipe(values); resetWorn()
 end
 function GV.SpecName() if not W then buildWeights() end return specName end
 -- the weights of a spec (nil = the active one) at the player's level, as the Value would use them
@@ -82,14 +99,19 @@ local function specWeights(i)
   if not db then return {} end
   local keep = db.gearSpec
   db.gearSpec = i; W = nil; buildWeights()
-  local out = {}; for k, v in pairs(W or {}) do if v ~= 0 then out[k] = math.floor(v * 100 + 0.5) / 100 end end
+  local w = {}; for k, v in pairs(W or {}) do w[k] = v end
+  -- the weapon DPS weights as they count (6.2.5): main hand = dpsmelee, else dps; off hand = dpsoh, else half of it
+  local melee = w.dpsmelee or w.dps or 0
+  w.dpsmelee = melee; w.dpsoh = w.dpsoh or melee * 0.5
+  local out = {}; for k, v in pairs(w) do if v ~= 0 then out[k] = math.floor(v * 100 + 0.5) / 100 end end
   db.gearSpec = keep; W = nil
   return out
 end
 -- own weights: created from the active spec the first time
 function GV.CustomWeights()
   if type(OneForAllCharDB) ~= "table" then return {} end
-  if type(OneForAllCharDB.gearCustom) ~= "table" then OneForAllCharDB.gearCustom = specWeights(nil) end
+  if type(OneForAllCharDB.gearCustom) ~= "table" then OneForAllCharDB.gearCustom = specWeights(nil); OneForAllCharDB.gearCustomV = 2
+  else migrateCustom(OneForAllCharDB.gearCustom) end
   return OneForAllCharDB.gearCustom
 end
 function GV.SetCustomWeight(k, v)
@@ -100,7 +122,7 @@ end
 -- start again from a spec's weights (nil = the active spec)
 function GV.ResetCustom(i)
   if type(OneForAllCharDB) ~= "table" then return end
-  OneForAllCharDB.gearCustom = specWeights(i)
+  OneForAllCharDB.gearCustom = specWeights(i); OneForAllCharDB.gearCustomV = 2
   if OneForAllCharDB.gearSpec == "custom" then GV.SetSpec("custom") end
 end
 -- the planner's spec drop-down: the class's three specs, the one in use (nil = active spec) and the active one
@@ -114,7 +136,7 @@ end
 function GV.SetSpec(i)
   if type(OneForAllCharDB) ~= "table" then return end
   OneForAllCharDB.gearSpec = i
-  W = nil; wipe(values); wipe(worn)
+  W = nil; wipe(values); resetWorn()
   if FLT.GearMarks and FLT.GearMarks.Refresh then FLT.GearMarks.Refresh() end
 end
 
@@ -123,7 +145,7 @@ local function weaponSpeed(id)
   local s = speeds[id]
   if s ~= nil then return s or nil end
   s = false
-  local data = C_TooltipInfo and C_TooltipInfo.GetItemByID and C_TooltipInfo.GetItemByID(id)
+  local data = type(C_TooltipInfo) == "table" and C_TooltipInfo.GetItemByID and C_TooltipInfo.GetItemByID(id)
   for _, line in ipairs(data and data.lines or {}) do
     local v = (line.rightText or ""):match("(%d+[%.,]%d+)")
     if v and (line.rightText or ""):find(SPEED or "Speed", 1, true) then s = tonumber((v:gsub(",", "."))); break end
@@ -159,8 +181,27 @@ local function forMyClass(id)
   return ok
 end
 
+-- SimGear's weapon speed (6.2.6, Score.speedFactor): its spdmh / spdoh / spdrg = % of the weapon DPS value per second
+-- above the kind's normalized speed, the speed clamped to what SimGear simmed for that kind
+local SPEED_KIND = { twoHand = { 3.3, 2.8, 3.9 }, oneHand = { 2.4, 1.5, 2.9 }, dagger = { 1.7, 1.3, 1.9 }, ranged = { 2.8, 2.0, 3.2 } }
+local function speedBonus(dpsValue, slot, id)
+  local pct = (slot == 16 and W.spdmh) or (slot == 17 and W.spdoh) or (slot == 18 and W.spdrg)
+  if not pct or pct == 0 or dpsValue <= 0 then return 0 end
+  local sp = weaponSpeed(id)
+  if not sp then return 0 end
+  local kind = "ranged"
+  if slot ~= 18 then
+    local info = C_Item and C_Item.GetItemInfoInstant or GetItemInfoInstant
+    local _, _, _, loc, _, classID, subID
+    if info then _, _, _, loc, _, classID, subID = info(id) end
+    kind = (loc == "INVTYPE_2HWEAPON" and "twoHand") or (classID == 2 and subID == 15 and "dagger") or "oneHand"
+  end
+  local k = SPEED_KIND[kind]
+  return dpsValue * pct / 100 * (math.min(math.max(sp, k[2]), k[3]) - k[1])
+end
+
 local function score(stats, slot, id, isWand)
-  local total = 0
+  local total, dpsValue = 0, 0
   for k, v in pairs(stats) do
     local s = KEYS[k]
     if s and type(v) == "number" then
@@ -183,17 +224,19 @@ local function score(stats, slot, id, isWand)
         local val = RATING[s] and v / RATING[s] or v
         if slot == 17 and s == "dps" and wk ~= "dpsoh" then val = val * 0.5 end
         total = total + val * w
+        if s == "dps" then dpsValue = dpsValue + val * w end
       end
     end
   end
   -- weapon speed: the main hand's weight for the main hand, the off hand's own one (speedoh) for the off hand
   -- (6.2.3, Discord Jax 09.11.: the main-hand speed weight counted for the off hand too)
+  -- a negative weight = fast weapons are better: |weight| x (4.0 - speed), as Gear Judge does (6.2.5, own weights)
   local wsp = (slot == 16 and W.speed) or (slot == 17 and W.speedoh) or 0
-  if wsp > 0 and stats.ITEM_MOD_DAMAGE_PER_SECOND_SHORT then
+  if wsp ~= 0 and stats.ITEM_MOD_DAMAGE_PER_SECOND_SHORT then
     local sp = weaponSpeed(id)
-    if sp then total = total + sp * wsp end
+    if sp then total = total + (wsp > 0 and sp * wsp or -wsp * math.max(0, 4 - sp)) end
   end
-  return total
+  return total + speedBonus(dpsValue, slot, id)
 end
 
 -- Value of an enchant / armor kit / ... (FLT.ENCHANTS stats) on the item in a slot; nil = no Value (procs and
@@ -253,8 +296,6 @@ local function wornValue(slot)
   return v
 end
 
--- Value of the item worn in a slot, its random bonus included (for the enchant suggestions)
-function GV.SlotItemValue(slot) return wornValue(slot) end
 
 local function slotFor(loc, slots)
   if loc == "INVTYPE_WEAPONOFFHAND" then return 17 end
@@ -338,6 +379,13 @@ function GV.Upgrade(id, link)
   end
   local base, replaced, cover
   if loc == "INVTYPE_2HWEAPON" then
+    -- shield tanks (Protection warriors and paladins) need the shield: a two-hander is no upgrade for them (6.2.5,
+    -- Discord 11.11., as Gear Judge does) - unless they wear one already
+    local _, cls = UnitClass("player")
+    if (cls == "WARRIOR" or cls == "PALADIN") and GV.SpecName() == "Protection" then
+      local mh = GetInventoryItemID and GetInventoryItemID("player", 16)
+      if not (mh and select(4, GetItemInfoInstant(mh)) == "INVTYPE_2HWEAPON") then return v end
+    end
     local a, b = wornValue(16), wornValue(17)
     base = a and b and (a + b); cover = { 16, 17 }
   elseif #slots == 2 and (loc ~= "INVTYPE_WEAPON" or (FLT.CanDualWield() and select(6, GetItemInfoInstant(GetInventoryItemID("player", 17) or 0)) == 2)) then
@@ -345,14 +393,15 @@ function GV.Upgrade(id, link)
     if a and b then
       -- the item is valued for each slot it can go to: main hand and off hand weigh weapon DPS very differently (6.2.3,
       -- Discord Jax 09.11.: a weaker dagger was valued as a main hand against the worn off-hand dagger -> "Upgrade 70%").
-      -- It replaces where it gains most; rings / trinkets (same value in both slots): the weaker worn one, as before.
+      -- It replaces where it gains most - in Value, not in % of the slot (6.2.5: a strong main hand was compared with a
+      -- weak off hand, whose small Value made any gain a big %); rings / trinkets (same gain): the weaker worn one.
       local va, vb = itemValue(id, slots[1], link), itemValue(id, slots[2], link)
       if not (va and vb) then return v end
       local useA
       if a <= 0 or b <= 0 then useA = a <= 0
       else
-        local ra, rb = (va - a) / a, (vb - b) / b
-        useA = ra > rb or (ra == rb and a <= b)
+        local ga, gb = va - a, vb - b
+        useA = ga > gb or (ga == gb and a <= b)
       end
       if useA then v, base, replaced = va, a, slots[1] else v, base, replaced = vb, b, slots[2] end
       cover = { replaced } -- named in the tooltip
@@ -365,14 +414,37 @@ function GV.Upgrade(id, link)
   return v, v - base, false, base, replaced, setDelta(id, cover)
 end
 
--- What players see is the change in % against the worn item (user 16.10.): kind, pct
+-- the Value of everything worn, active set bonuses included; nil while an item has no data yet
+local GEAR_SLOTS = { 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18 } -- no shirt, no tabard
+local function gearTotal()
+  if gearSum then return gearSum end
+  local t = 0
+  for _, s in ipairs(GEAR_SLOTS) do
+    local v = wornValue(s)
+    if not v then return nil end
+    t = t + v
+  end
+  if FLT.ITEM_SETS then for set, n in pairs(wornSets()) do t = t + bonusValue(set, n) end end
+  gearSum = t
+  return t
+end
+GV.Total = gearTotal
+-- "2.4" / "2,4" (the client's decimal separator), from 10 % on without decimals
+function GV.Pct(p)
+  local s = string.format(p >= 9.95 and "%.0f" or "%.1f", p)
+  local sep = type(DECIMAL_SEPERATOR) == "string" and DECIMAL_SEPERATOR or "."
+  return sep ~= "." and (s:gsub("%.", sep)) or s
+end
+
+-- What players see is the change in % of the whole gear's Value (6.2.5, user 11.11.: "vergleich zum gesamten gear";
+-- before it was % of the replaced item, so a weak worn item made every small gain huge): kind, pct
 -- kind: "up" / "down" / "same" / "new" (nothing worn there, or it has no value) / "worn"; nil = no data yet;
 -- third value: the slot compared with when there are two (rings, trinkets, dual wield)
 -- 4th / 5th value: kind and % with the set bonuses it loses or completes (user 09.11.: the arrows stay for the item
 -- alone - "theoretically better", worth taking along - and the tooltip shows the set line too); nil = no set change
-local function kindOf(d, base)
-  local pct = d / base * 100
-  if pct >= 0.5 then return "up", pct elseif pct <= -0.5 then return "down", -pct end
+local function kindOf(d, tot)
+  local pct = d / tot * 100
+  if pct >= 0.1 then return "up", pct elseif pct <= -0.1 then return "down", -pct end
   return "same"
 end
 function GV.Change(id, link)
@@ -380,10 +452,16 @@ function GV.Change(id, link)
   if not v then return nil end
   if equipped then return "worn" end
   if not d then return nil end
-  if not base or base <= 0 then return v > 0 and "new" or "same" end
-  local kind, pct = kindOf(d, base)
+  local tot = gearTotal()
+  if not base or base <= 0 then
+    -- nothing (of Value) worn there: "new", with the % when there is other gear to compare with
+    if v <= 0 then return "same" end
+    return "new", tot and tot > 0 and v / tot * 100 or nil
+  end
+  if not tot or tot <= 0 then return nil end
+  local kind, pct = kindOf(d, tot)
   local sKind, sPct
-  if sd and sd ~= 0 then sKind, sPct = kindOf(d + sd, base) end
+  if sd and sd ~= 0 then sKind, sPct = kindOf(d + sd, tot) end
   return kind, pct, kind == "up" and replaced or nil, sKind, sPct, sd
 end
 
@@ -407,10 +485,14 @@ function GV.TooltipLine(tt, id, itemLink)
   local which = link and link:match("%[(.-)%]")
   which = which and ("  |cffb0b0b0" .. string.format(L["(replaces %s)"], which) .. "|r") or ""
   local function line(k, p, extra)
-    if k == "up" then tt:AddLine(UP .. string.format(L["Upgrade: %d%%"], math.floor(p + 0.5)) .. extra, 0.25, 1, 0.25)
-    elseif k == "down" then tt:AddLine(DOWN .. string.format(L["Downgrade: %d%%"], math.floor(p + 0.5)) .. extra, 1, 0.3, 0.3) end
+    if k == "up" then tt:AddLine(UP .. string.format(L["Upgrade: %s%%"], GV.Pct(p)) .. extra, 0.25, 1, 0.25)
+    elseif k == "down" then tt:AddLine(DOWN .. string.format(L["Downgrade: %s%%"], GV.Pct(p)) .. extra, 1, 0.3, 0.3) end
   end
-  if kind == "new" then tt:AddLine(UP .. L["Upgrade (slot empty)"], 0.25, 1, 0.25) return end
+  if kind == "new" then
+    if pct then line("up", pct, "  |cffb0b0b0" .. L["(slot empty)"] .. "|r")
+    else tt:AddLine(UP .. L["Upgrade (slot empty)"], 0.25, 1, 0.25) end
+    return
+  end
   line(kind, pct, which)
   -- set bonuses (6.2.2, user 09.11.): a second line with the bonus it loses / completes, e.g. green "Upgrade: 8%" and
   -- red "Downgrade: 5% (set bonus lost)" - the item itself is better, worn now it costs the bonus
@@ -419,11 +501,36 @@ function GV.TooltipLine(tt, id, itemLink)
   end
 end
 
+-- /ofa gv (6.2.5-beta2, user 11.11.: "kann ich das im spiel irgendwie testen?"): how the Value of the item under the mouse
+-- (or a linked item: /ofa gv [link]) comes about - weights, item, worn item, change, whole gear
+function GV.Debug(itemString)
+  local say = FLT.Msg or print
+  local link = itemString
+  if not link and GameTooltip and GameTooltip:IsShown() and GameTooltip.GetItem then link = select(2, GameTooltip:GetItem()) end
+  local id = link and tonumber(link:match("item:(%d+)"))
+  if not id then say(L["Point at an item (or shift-click it into the line), then type /ofa gv."]) return end
+  if not W then buildWeights() end
+  local name = (GetItemInfo and GetItemInfo(id)) or ("item:" .. id)
+  say(string.format(L["Gear Value of %s - weights: %s, level %d"], name, L[specName or "Leveling"], UnitLevel("player") or 0))
+  local v, d, equipped, base, replaced, sd = GV.Upgrade(id, link)
+  local tot = gearTotal()
+  if not v then say(L["No Value (not gear for you, or no item data yet)."]) return end
+  local slots = {}
+  for _, s in ipairs(GEAR_SLOTS) do local wv = wornValue(s); if wv and wv ~= 0 then slots[#slots + 1] = s .. "=" .. string.format("%.1f", wv) end end
+  say(string.format(L["Worn Value per slot: %s"], table.concat(slots, "  ")))
+  say(string.format(L["Item: %.1f  |  replaces: %s (slot %s)  |  change: %s  |  whole gear: %s"], v,
+    base and string.format("%.1f", base) or "-", tostring(replaced or (equipped and "worn") or "-"),
+    d and string.format("%+.1f", d) or "-", tot and string.format("%.1f", tot) or "-"))
+  local kind, pct = GV.Change(id, link)
+  say(string.format(L["Result: %s %s%%"], tostring(kind), pct and GV.Pct(pct) or "-") ..
+    ((sd and sd ~= 0) and ("  (" .. string.format(L["set bonus %+.1f"], sd) .. ")") or ""))
+end
+
 -- refresh: talents / level change the weights, gear changes the worn values
 local ev = CreateFrame("Frame")
 for _, e in ipairs({ "PLAYER_LEVEL_UP", "PLAYER_TALENT_UPDATE", "CHARACTER_POINTS_CHANGED", "TRAIT_CONFIG_UPDATED",
   "ACTIVE_TALENT_GROUP_CHANGED", "PLAYER_EQUIPMENT_CHANGED" }) do pcall(ev.RegisterEvent, ev, e) end
 ev:SetScript("OnEvent", function(_, event)
-  if event == "PLAYER_EQUIPMENT_CHANGED" then wipe(worn); setWorn = nil else W = nil end
+  if event == "PLAYER_EQUIPMENT_CHANGED" then resetWorn(); setWorn = nil else W = nil end
 end)
-GV._reset = function() W = nil; setWorn = nil; wipe(values); wipe(worn); wipe(speeds); wipe(classOK) end -- tests
+GV._reset = function() W = nil; setWorn = nil; wipe(values); resetWorn(); wipe(speeds); wipe(classOK) end -- tests

@@ -1,13 +1,13 @@
 local _, FLT = ...
 
 -- WoW Forever talent layouts (tree, row, column, max ranks, prerequisite).
--- Source: talentsforever.com exports (CC BY 4.0), beta build 1.60.1.70755, generated 2026-11-04
+-- Source: talentsforever.com exports (CC BY 4.0), beta build 1.60.1.70755, generated 2026-11-10
 -- (tools/talent-gen/talents.py, cross-checked with the wowtbc.gg calculator).
 -- The planner matches these entries to the live client talents by name; the
 -- client still provides icons, tooltips and node IDs.
 -- To update after a patch, only this file needs to change.
 -- Entry format: { tree, row, col, maxRanks, "Name", "Prerequisite name" or nil }
-FLT.TALENT_DATA_BUILD = "1.60.1.70755 (2026-11-04)"
+FLT.TALENT_DATA_BUILD = "1.60.1.70755 (2026-11-10)"
 
 FLT.TALENT_DATA = {
   [1] = { token="WARRIOR", name="Warrior", trees={"Arms", "Fury", "Protection"}, talents={

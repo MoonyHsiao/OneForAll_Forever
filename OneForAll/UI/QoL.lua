@@ -21,6 +21,9 @@ local NEW_TAGS = { -- the 6.1.x marks removed when 6.2.0 started (rule: marks st
   questXPTracked = "6.2.2",
   guildMap = "6.2.2",
   quiverAmmo = "6.2.2",
+  deValue = "6.2.6",
+  tipMouse = "6.2.7",
+  bookAlertNoFlying = "6.2.7",
 }
 -- placed left of the checkbox (or of the label when there is none), user 16.10.
 local function newTag(parent, anchor, key, dx)
@@ -460,6 +463,12 @@ local function createQoLPanel(parent)
       for _, fn in ipairs(refreshers) do pcall(fn) end
     end)
   end
+  do -- 6.2.5 (user 11.11.): the bar can be moved (Shift-drag) - this puts it back when it got lost somewhere
+    local r = row(g, N"Bar position", N"Back to the top middle of the screen.", nil, 24)
+    button(r, N"Reset", 60, N"For when the bar was moved somewhere you can't reach it.", function()
+      if FLT.InfoBar and FLT.InfoBar.ResetPosition then FLT.InfoBar.ResetPosition() end
+    end)
+  end
   check(g, N"Hide error messages", N"Hides the red messages in the middle of the screen.", N"Messages like \"Out of range\" or \"Not enough rage\" are no longer shown. Still shown: inventory or bags full, quest log full, not enough money, carrying too many of an item.", "hideErrors")
   g = group(c, N"Windows")
   do
@@ -616,9 +625,16 @@ local function createQoLPanel(parent)
   check(g, N"Arrow color by armor type", N"Yellow arrow for upgrades in a lighter armor type.", N"The green arrow stays for upgrades in the best armor type of your class. Upgrades in a lighter type get a yellow arrow: warriors and paladins wear plate from level 40 (mail before), hunters and shamans mail from 40 (leather before), rogues and druids leather. Cloaks, jewelry, shields and weapons are not affected. Needs \"Gear Value\".", "arrowTiers", 24)
   check(g, N"Short green stats", N"Long \"Equip:\" lines as short stats, e.g. \"+1% Hit\".", N"\"Equip: Improves your chance to hit by 1%.\" becomes \"+1% Hit\", spell damage and healing get a line each, and \"Enchanted:\" lines put the number first. Lines it does not know stay as they are. Hover the item again after switching.", "shortStats")
   check(g, N"Hide \"appearance not collected\"", N"No more blue \"You haven't collected this appearance\" line on items.", N"Also hides \"You've collected this appearance, but not from this item\". Hover the item again after switching.", "hideAppearance")
+  -- off until the user decides (CLAUDE.md "Fixed rules"), 6.2.6-beta33
+  check(g, N"Disenchant value", N"What an item is worth disenchanted, at auction house prices.", N"Needs Auctionator (the prices come from it); without it the line stays away. Green, blue and purple weapons and armor: the dust, essences and shards it usually gives, from the known disenchant chances by quality and item level - an estimate.", "deValue")
   check(g, N"Recipes: who knows it", N"Whether you, an alt or a guild member knows a recipe.", nil, "recipeTip")
   check(g, N"Disable automatic compare tooltip", N"Hold Shift to see your equipped item next to the tooltip.", N"Item tooltips no longer show your equipped item next to them automatically.", nil, nil,
     function() return Q.GetCompareShift() end, function(v) Q.SetCompareShift(v) end)
+  -- 6.2.7-beta15 (user 13.11.): off until the user decides the defaults (CLAUDE.md "Fixed rules")
+  g = group(c, N"Tooltip position")
+  choice(g, N"Tooltip at the mouse", N"Tooltips that normally appear at the bottom right show at your mouse.", N"Choose on which side of the mouse it opens. Tooltips that addons or windows place themselves stay where they are.", "tipMousePos", Q.TIP_ANCHORS, "tipMouse")
+  check2(g, { N"Not in dungeons and raids", N"There the tooltip stays at its usual place.", nil, "tipMouseNoDungeon" },
+    { N"Not in battlegrounds", N"There the tooltip stays at its usual place.", nil, "tipMouseNoPvP" }, 24)
   g = group(c, N"Units")
   check(g, N"Target of players", N"Shows who a player or NPC under your mouse is targeting.", N"\"You\" when it is you.", "unitTarget")
   check(g, N"Quests on NPCs", N"Quests you can take (!) or turn in (?) at the NPC under your mouse.", N"The same quests as the quest icons on the world map: for your level, side, race and class, pre-quests done. Off while Questie is loaded (it shows its own).", "npcQuestTip")
@@ -653,7 +669,7 @@ local function createQoLPanel(parent)
   -- GUILD (own category, user 09.11.: "eventuell kommt ja noch mehr dazu")
   c = category("guild", N"Guild", "Interface\\Icons\\INV_Shirt_GuildTabard_01", N"What you share with your guild members who also use OneForAll.")
   g = group(c, N"World Map")
-  check(g, N"Guild members on the map", N"Guild members with OneForAll as dots in their class colour - and you on their map.", N"Only guild members who also use OneForAll and have this switched on. Switched off, your position is not sent any more and you see nobody else either. Inside a dungeon or raid only which one is sent: a green guild flag on its entrance, the names in its tooltip. Members in your group are left out, the game shows them already. Also on the continent map, a little smaller.", "guildMap")
+  check(g, N"Guild members on the map", N"Guild members with OneForAll as dots in their class colour - and you on their map.", N"Only guild members who also use OneForAll and have this switched on. Switched off, your position is not sent any more and you see nobody else either. Inside a dungeon or raid only which one is sent: a green guild flag on its entrance, the names in its tooltip. Members in your group are left out, the game shows them already. Also on the continent map, a little smaller. Guild members who share their position with the addon OpenMap are shown too.", "guildMap")
 
   -- WORLD MAP
   c = category("map", N"World Map", "Interface\\Icons\\INV_Misc_Map_01", N"Icons on the world map.")
@@ -833,6 +849,8 @@ local function createQoLPanel(parent)
   check(g, N"Nearby Library Book alerts", N"Popup when you are close to a missing library book.", nil, nil, nil,
     function() return FLT.IsNearbyAlertsEnabled and FLT:IsNearbyAlertsEnabled() and true or false end,
     function(v) if FLT.SetNearbyAlertsEnabled then FLT:SetNearbyAlertsEnabled(v) end end)
+  -- 6.2.7 (user 13.11.: "damit man es ausschalten kann waehrend man fliegt")
+  check(g, N"Not while flying", N"No book popup while you are on a flight path or flying mount.", nil, "bookAlertNoFlying", 24)
   check(g, N"Pet ability alerts (Hunter)", N"Popup when a beast nearby teaches a higher ability rank your pets can learn.", nil, nil, nil,
     function() return FLT.IsPetTeachAlertsEnabled and FLT:IsPetTeachAlertsEnabled() and true or false end,
     function(v) if FLT.SetPetTeachAlertsEnabled then FLT:SetPetTeachAlertsEnabled(v) end end)

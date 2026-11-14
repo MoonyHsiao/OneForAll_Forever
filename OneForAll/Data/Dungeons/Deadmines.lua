@@ -140,6 +140,7 @@ FLT.DUNGEON_REGISTRY["The Deadmines"] = {
             name = "Old Fire-Eye",
             requires = 20,
             faction = "Horde",
+            races = 16, -- Undead (QuestieDB)
             class = "PALADIN",
             pickup = "Lumina Windsinger, Silverpine Forest (43.4, 41.0)",
             objective = "Use the Moonsilver Blade to destroy Old-Fire Eye in Silverpine Forest.",

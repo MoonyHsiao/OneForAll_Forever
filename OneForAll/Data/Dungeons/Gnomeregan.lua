@@ -193,7 +193,7 @@ FLT.DUNGEON_REGISTRY["Gnomeregan"] = {
             rewardItems = {
                 {9173, "Goblin Transponder", 1},
             },
-            note = "Needs Chief Engineer Scooty (from Sovik in Orgrimmar). With the Goblin Transponder you can use the teleporter in Gnomeregan to get back to Booty Bay.",
+            note = "Needs Chief Engineer Scooty (from Sovik in Orgrimmar). With the Goblin Transponder you can use Scooty's teleporter in Booty Bay to get to Gnomeregan.",
         },
         {
             level = 30,

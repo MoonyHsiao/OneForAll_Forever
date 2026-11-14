@@ -604,29 +604,29 @@ FLT.PET_ABILITIES = {
       }},
     }},
   {name="Furious Howl", icon="ability_hunter_pet_wolf", source="wild", families={"Wolf"},
-    effect="The wolf howls, increasing the melee attack power of all party members within 15 yards.  Lasts 1 min.",
+    effect="The wolf howls, increasing the melee attack power of all party or raid members within 15 yards.  Lasts 1 min.", -- ranks: Wowhead Forever 24604/24605/24603/24597 (6.2.5, Discord cankir42 10.11.)
     ranks={
-      {rank=1, level=10, tp=10, desc="The wolf howls, increasing the melee attack power of all party members within 15 yards by 139.  Lasts 1 min.", learnFrom={
+      {rank=1, level=10, tp=10, desc="The wolf howls, increasing the melee attack power of all party or raid members within 15 yards by 13.  Lasts 1 min.", learnFrom={
         {name="Prairie Wolf Alpha", level="9-10", zone="Mulgore", npcID=2960, mapID=1412, x=52.2, y=41.5, family="Wolf"},
         {name="Worg", level="10-11", zone="Silverpine Forest", npcID=1765, mapID=1421, x=63.8, y=11.1, family="Wolf"},
         {name="Coyote Packleader", level="11-12", zone="Westfall", npcID=833, mapID=1436, x=41.7, y=26.7, family="Wolf"},
         {name="Mist Howler", level="22", zone="Ashenvale", npcID=10644, mapID=1440, x=26.8, y=18.4, family="Wolf"},
       }},
-      {rank=2, level=24, tp=15, desc="The wolf howls, increasing the melee attack power of all party members within 15 yards by 51 to 62.  Lasts 1 min.", learnFrom={
+      {rank=2, level=24, tp=15, desc="The wolf howls, increasing the melee attack power of all party or raid members within 15 yards by 31 to 38.  Lasts 1 min.", learnFrom={
         {name="Black Ravager Mastiff", level="25-26", zone="Duskwood", npcID=1258, mapID=1431, x=67.2, y=35.1, family="Wolf"},
         {name="Ghostpaw Alpha", level="27-28", zone="Ashenvale", npcID=3825, mapID=1440, x=71.9, y=58.0, family="Wolf"},
         {name="Elder Crag Coyote", level="39-40", zone="Badlands", npcID=2729, mapID=1418, x=27.4, y=62.2, family="Wolf"},
         {name="Longtooth Howler", level="43-44", zone="Feralas", npcID=5287, mapID=1444, x=62.0, y=51.1, family="Wolf"},
         {name="Silvermane Howler", level="45-46", zone="The Hinterlands", npcID=2925, mapID=1425, x=43.0, y=53.7, family="Wolf"},
       }},
-      {rank=3, level=40, tp=20, desc="The wolf howls, increasing the melee attack power of all party members within 15 yards by 115.  Lasts 1 min.", learnFrom={
+      {rank=3, level=40, tp=20, desc="The wolf howls, increasing the melee attack power of all party or raid members within 15 yards by 68.  Lasts 1 min.", learnFrom={
         {name="Longtooth Runner", level="40-41", zone="Feralas", npcID=5286, mapID=1444, x=64.5, y=48.6, family="Wolf"},
         {name="Snarler", level="42", zone="Feralas", npcID=5356, mapID=1444, x=80.2, y=39.6, family="Wolf"},
         {name="Silvermane Wolf", level="43-44", zone="The Hinterlands", npcID=2924, mapID=1425, x=32.1, y=55.3, family="Wolf"},
         {name="Felpaw Wolf", level="47-48", zone="Felwood", npcID=8959, mapID=1448, x=49.1, y=83.2, family="Wolf"},
         {name="Death Howl", level="49", zone="Felwood", npcID=14339, mapID=1448, x=50.0, y=77.1, family="Wolf"},
       }},
-      {rank=4, level=56, tp=25, desc="The wolf howls, increasing the melee attack power of all party members within 15 yards by 45 to 57.  Lasts 1 min.", learnFrom={
+      {rank=4, level=56, tp=25, desc="The wolf howls, increasing the melee attack power of all party or raid members within 15 yards by 84.  Lasts 1 min.", learnFrom={
         {name="Bloodaxe Worg", level="56-57", zone="Blackrock Spire (Dungeon)", npcID=9696, family="Wolf"},
       }},
     }},

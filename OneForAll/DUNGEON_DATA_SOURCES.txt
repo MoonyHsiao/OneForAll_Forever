@@ -246,3 +246,10 @@ Dungeon quests completed (6.2.4, 2026-11-10)
   objective from the Wowhead tooltip API (Forever).
 - City of Dalaran chains: An Alarming Request (Alliance) and Prison Break In, Key to the City, Dalaran Patrols,
   Blood in the Streets (Horde) end at the Image of Archmage Modera, who gives the dungeon quests (QuestieDB).
+- New Forever dungeons (13.11.2026): boss names as shown in game, NPC IDs, portraits (display IDs the client knows),
+  creature types, boss loot with item IDs and - for bosses with 100+ recorded kills - Forever drop chances from the
+  Wowhead Forever NPC pages; NPC IDs also from QuestieDB Forever. Boss levels of these dungeons are not published
+  anywhere yet: OneForAll learns them when you target a boss. More dungeon quests from QuestieDB Forever.
+- The Drowned City boss levels (13.11.2026): from players' screenshots, as the values are not published on Wowhead,
+  wowtbc.gg or foreverchanges.pro; a level learned in game by targeting the boss replaces them. "Pyromancer" Braxton,
+  the trash items and Krol'dok Warplate Legplates: IDs and "Dropped by" from the Wowhead Forever tooltip API.

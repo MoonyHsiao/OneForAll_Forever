@@ -45,13 +45,32 @@ local function getQuestLogInfo(q)
   return false, false
 end
 
+-- race masks (6.2.6, Discord cralic 12.11.: "Compendium of the Fallen" showed as available for Undead): bit (raceID-1)
+local function raceOK(q)
+  if not q.races or not UnitRace then return true end
+  local _, _, id = UnitRace("player")
+  id = tonumber(id)
+  if not id or id < 1 then return true end
+  return math.floor(q.races / 2 ^ (id - 1)) % 2 == 1
+end
+local RACE_EN = { "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome", "Troll" }
+local function raceNames(mask)
+  local out = {}
+  for id = 1, 11 do
+    if math.floor(mask / 2 ^ (id - 1)) % 2 == 1 then
+      local info = type(C_CreatureInfo) == "table" and C_CreatureInfo.GetRaceInfo and C_CreatureInfo.GetRaceInfo(id)
+      out[#out + 1] = (info and info.raceName) or RACE_EN[id] or tostring(id)
+    end
+  end
+  return table.concat(out, ", ")
+end
 local function dungeonQuestEligible(q)
   local faction = UnitFactionGroup and UnitFactionGroup("player") or nil
   local classToken
   if UnitClass then local _, token = UnitClass("player"); classToken = token end
   local sideOK = (not q.side or q.side == "Both" or q.side == "Neutral" or not faction or q.side == faction)
   local classOK = (not q.class or not classToken or q.class == classToken)
-  return sideOK and classOK
+  return sideOK and classOK and raceOK(q)
 end
 
 local QUEST_STATUS_LABELS = {
@@ -116,6 +135,32 @@ local function getDungeonQuestStatus(d, q)
   end
 
   return "available"
+end
+
+-- Why getDungeonQuestStatus says "unavailable" (6.2.6, user 11.11.: "so schreiben, dass man weiss wieso"), in the same
+-- order: "side", faction | "class", class token | "race", race names | "level", required, player level | "step", the first open required
+-- chain step. nil when the reason is not known.
+local function getUnavailableReason(q)
+  if not q then return nil end
+  local faction = UnitFactionGroup and UnitFactionGroup("player") or nil
+  if q.side and q.side ~= "Both" and q.side ~= "Neutral" and faction and q.side ~= faction then return "side", q.side end
+  if q.class and UnitClass then
+    local _, token = UnitClass("player")
+    if token and q.class ~= token then return "class", q.class end
+  end
+  if not raceOK(q) then return "race", raceNames(q.races) end
+  local playerLevel = UnitLevel and tonumber(UnitLevel("player")) or nil
+  local required = tonumber(q.required or q.level)
+  if playerLevel and required and playerLevel < required then return "level", required, playerLevel end
+  local chain = q.id and FLT.QUEST_PREREQ_CHAINS and FLT.QUEST_PREREQ_CHAINS[q.id]
+  if chain then
+    for _, step in ipairs(chain) do
+      if step.id and step.id ~= q.id and not step.optional and FLT.IsQuestDone and not FLT:IsQuestDone(step.id) then
+        return "step", step
+      end
+    end
+  end
+  return nil
 end
 
 local function dungeonSideColor(side)
@@ -456,6 +501,7 @@ end
 H.questLogButton = questLogButton
 H.QUEST_STATUS_LABELS = QUEST_STATUS_LABELS
 H.getDungeonQuestStatus = getDungeonQuestStatus
+H.getUnavailableReason = getUnavailableReason
 H.getQuestLogInfo = getQuestLogInfo
 H.getChainProgress = getChainProgress
 H.dungeonSideColor = dungeonSideColor

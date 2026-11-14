@@ -145,7 +145,16 @@ local function readProfTrainer(all)
         local r = byName[skill .. "|" .. name]
         local id = serviceSpellID(i)
         if not r and id then for _, x in ipairs(FLT.PROFESSION_RECIPES[skill] or {}) do if x.s == id then r = x; break end end end
-        if r then db[skill] = db[skill] or {}; db[skill][r.s] = rank; got = got + 1 end
+        if r then
+          db[skill] = db[skill] or {}; db[skill][r.s] = rank; got = got + 1
+          -- the fee as the trainer asks it (6.2.6, Skill-Up Helper; beats Data/ProfessionFees.lua)
+          local cost = GetTrainerServiceCost and tonumber((GetTrainerServiceCost(i)))
+          if cost and type(OneForAllDB) == "table" then
+            OneForAllDB.trainerFees = OneForAllDB.trainerFees or {}
+            local f = OneForAllDB.trainerFees[skill] or {}; OneForAllDB.trainerFees[skill] = f
+            f[r.s] = cost
+          end
+        end
       end
     end
   end

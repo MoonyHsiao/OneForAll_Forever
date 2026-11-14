@@ -198,6 +198,38 @@ function FLT.IsQuestGrey(id, level)
   end
   return level ~= nil and level > 0 and level <= greyAt(pl)
 end
+-- where a quest starts / is turned in according to the pin data (6.2.7, user 13.11.: every NPC under "Starts at" / "Turn in"
+-- of a dungeon quest gets a Map button): { mapID, x, y, label }, looked up on first use per quest (a Map button is rare)
+local pinLoc = { [false] = {}, [true] = {} }
+function FLT.QuestPinLoc(id, isEnd)
+  if not (id and FLT.QUEST_PINS) then return nil end
+  local c = pinLoc[isEnd and true or false]
+  if c[id] ~= nil then return c[id] or nil end
+  local found = false
+  local key = "/" .. id .. "/"
+  for mapID, raw in pairs(FLT.QUEST_PINS) do
+    if isEnd then
+      for x, y, ids, name in raw:gmatch("%?([%d.]+),([%d.]+),([%d/]+),([^\n]*)") do
+        if ("/" .. ids .. "/"):find(key, 1, true) then found = { mapID = mapID, x = tonumber(x), y = tonumber(y), name = name }; break end
+      end
+    else
+      local p = raw:find("\n" .. id .. "|", 1, true)
+      if p then
+        for at, x, y, name in raw:gmatch("()!([%d.]+),([%d.]+),([^\n]*)") do
+          if at > p then break end
+          found = { mapID = mapID, x = tonumber(x), y = tonumber(y), name = name }
+        end
+      end
+    end
+    if found then break end
+  end
+  if found then
+    local m = C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(found.mapID)
+    found.label = (FLT.Name and FLT.Name(found.name) or found.name) .. (m and m.name and (", " .. m.name) or "")
+  end
+  c[id] = found
+  return found or nil
+end
 local function xpRange(q)
   local from = math.max(1, q.req)
   local to = from
@@ -537,13 +569,19 @@ function MQ.AddUnitLines(tt, unit)
   local added = false
   local e = nearest(npc.ends, px, py)
   for _, id in ipairs(e and e.ids or {}) do
-    if complete[id] then tt:AddLine(TURNIN_ICON .. (titles[id] or title({ id = id })), 0.4, 0.9, 0.4, true); added = true end
+    if complete[id] then
+      local d = dungeonOf(id) -- 6.2.7-beta14 (user 13.11.: "im tooltip steht kein D fuer Dungeon quest"), like the map pins
+      tt:AddLine(TURNIN_ICON .. (d and ("[" .. dLetter(d) .. "] ") or "") .. (titles[id] or title({ id = id }))
+        .. (d and ("  |cff9d9d9d" .. dName(d) .. "|r") or ""), 0.4, 0.9, 0.4, true); added = true
+    end
   end
   local g = nearest(npc.starts, px, py)
   for _, q in ipairs(g and g.quests or {}) do
     if available(q) then
       local c = GetQuestDifficultyColor and GetQuestDifficultyColor(q.lvl) or { r = 1, g = 1, b = 1 }
-      tt:AddLine(AVAIL_ICON .. "[" .. q.lvl .. "] " .. title(q), c.r, c.g, c.b, true); added = true
+      local d = dungeonOf(q.id)
+      tt:AddLine(AVAIL_ICON .. "[" .. (d and dLetter(d) or "") .. q.lvl .. "] " .. title(q) .. (d and ("  |cff9d9d9d" .. dName(d) .. "|r") or ""),
+        c.r, c.g, c.b, true); added = true
     end
   end
   if added then tt:Show() end

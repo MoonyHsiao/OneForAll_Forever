@@ -165,6 +165,8 @@ FLT.ENCHANTS = {
   [2716] = { "+16 Stamina, +100 Armor", { ITEM_MOD_STAMINA_SHORT = 16, RESISTANCE0_NAME = 100 } },
   [2717] = { "+26 Attack Power, +26 Ranged Attack Power, +1% Critical Strike", { ITEM_MOD_ATTACK_POWER_SHORT = 26, ITEM_MOD_RANGED_ATTACK_POWER_SHORT = 26, PCT_ITEM_MOD_CRIT_RATING_SHORT = 1 } },
   [2721] = { "+15 Spell Power, +1% Spell Critical Strike", { ITEM_MOD_SPELL_POWER_SHORT = 15, PCT_ITEM_MOD_SPELL_CRIT_RATING_SHORT = 1 } },
+  [7646] = { "Holy Damage +20", {  }, true },
+  [7647] = { "Arcane Damage +20", {  }, true },
   [7656] = { "+9 Agility", { ITEM_MOD_AGILITY_SHORT = 9 } },
   [7659] = { "+9 Intellect", { ITEM_MOD_INTELLECT_SHORT = 9 } },
   [7660] = { "+12 Spirit", { ITEM_MOD_SPIRIT_SHORT = 12 } },
@@ -209,6 +211,7 @@ FLT.ENCHANTS = {
   [8720] = { "+2% Critical Strike", { PCT_ITEM_MOD_CRIT_RATING_SHORT = 2 } },
   [8721] = { "Recovery", {  }, true },
   [8734] = { "+3 Intellect", { ITEM_MOD_INTELLECT_SHORT = 3 } },
+  [8737] = { "Speed Increase", {  }, true },
 }
 FLT.ENCHANT_OPTIONS = {
   { e = 43, n = "Iron Shield Spike", p = "Blacksmithing", s = 7221, i = 6042, req = 125, c = 4, t = 0, m = 96 },
@@ -384,6 +387,9 @@ FLT.ENCHANT_OPTIONS = {
   { e = 2567, n = "Enchant Weapon - Mighty Spirit", p = "Enchanting", s = 23803, req = 300, c = 2, t = 0, m = 58867 },
   { e = 2504, n = "Enchant Weapon - Spell Power", p = "Enchanting", s = 22749, req = 300, c = 2, t = 0, m = 58867 },
   { e = 1897, n = "Enchant Weapon - Superior Striking", p = "Enchanting", s = 20031, req = 300, c = 2, t = 0, m = 189939 },
+  { e = 7647, n = "Enchant Gloves - Arcane Power", p = "Enchanting", s = 1213626, req = 300, c = 4, t = 1024, m = 31 },
+  { e = 7646, n = "Enchant Gloves - Holy Power", p = "Enchanting", s = 1213622, req = 300, c = 4, t = 1024, m = 31 },
+  { e = 8737, n = "Enchant Boots - Speed", p = "Enchanting", s = 1328948, req = 280, c = 4, t = 256, m = 30 },
   { e = 30, n = "Crude Scope", p = "Engineering", s = 3977, i = 4405, req = 60, c = 2, t = 0, m = 262156 },
   { e = 32, n = "Standard Scope", p = "Engineering", s = 3978, i = 4406, req = 110, c = 2, t = 0, m = 262156 },
   { e = 33, n = "Accurate Scope", p = "Engineering", s = 3979, i = 4407, req = 180, c = 2, t = 0, m = 262156 },

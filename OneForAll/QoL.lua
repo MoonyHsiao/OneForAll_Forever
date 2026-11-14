@@ -17,6 +17,7 @@ local DEFAULTS = {
   inviteMode = "friendsguild", keywordMode = "friendsguild", keyword = "inv", duelMode = "friendsguild",
   durabilityPct = 20, mmDir = "auto", logoColor = "teal", -- logo color: turquoise by default (user 27.10.)
   lowRank = true, -- on by default (user 15.10.)
+  tipMousePos = "BOTTOMRIGHT", -- Tooltip at the mouse: off, bottom right preselected (user 13.11.; the list showed "Top left" before)
   mapLandmarks = true, lmDungeons = true, lmFlight = true, lmTransport = true, lmTransitions = true, -- transitions: on like all landmarks (user 01.11.) -- Map Landmarks: on with all parts (user 16.10.)
   gearValue = true, -- Gear Planner Value in item tooltips: on (user 16.10.)
   spellbookTrainer = true, -- trainer button in the spellbook: on (user 22.10.)
@@ -378,21 +379,38 @@ end
 local function questComplete()
   if not QoL.Get("autoTurnIn") or paused() or not GetQuestReward then return end
   local n = GetNumQuestChoices and GetNumQuestChoices() or 0
-  if n <= 1 then GetQuestReward(n) end -- reward choices stay manual
+  if n <= 1 then
+    local title = GetTitleText and GetTitleText()
+    if title and GetTime then QoL.recentTurnIn[title] = GetTime() end
+    GetQuestReward(n)
+  end -- reward choices stay manual
+end
+-- repeatable quests are left alone (6.2.5, Discord kersey 11.11.: Mangletooth's repeatable Blood Shard quests were turned
+-- in again and again, the other quests never). Gossip and the available list say "repeatable"; for the active list of a
+-- quest greeting the quest log is asked, and a quest turned in a moment ago is not picked again (the loop's safety net)
+-- (table fields, not locals: the file is at 200 locals)
+QoL.recentTurnIn = {} -- [title] = GetTime() of the automatic turn-in
+function QoL.RepeatableID(id)
+  return id and C_QuestLog and C_QuestLog.IsRepeatableQuest and C_QuestLog.IsRepeatableQuest(id) or false
+end
+function QoL.JustTurnedIn(title)
+  local t = title and QoL.recentTurnIn[title]
+  return t and GetTime and GetTime() - t < 60 or false
 end
 local function questGreeting()
   if paused() then return end
   if QoL.Get("autoTurnIn") and GetNumActiveQuests then
     for i = 1, GetNumActiveQuests() or 0 do
-      local _, complete = GetActiveTitle(i)
-      if complete then SelectActiveQuest(i); return end
+      local title, complete = GetActiveTitle(i)
+      local id = GetActiveQuestID and GetActiveQuestID(i)
+      if complete and not QoL.RepeatableID(id) and not QoL.JustTurnedIn(title) then SelectActiveQuest(i); return end
     end
   end
   if QoL.Get("autoAccept") and GetNumAvailableQuests then
     for i = 1, GetNumAvailableQuests() or 0 do
-      local trivial, _, _, _, id = nil, nil, nil, nil, nil
-      if GetAvailableQuestInfo then trivial, _, _, _, id = GetAvailableQuestInfo(i) end
-      if not grey(id, nil, trivial) then SelectAvailableQuest(i); return end
+      local trivial, _, rep, _, id
+      if GetAvailableQuestInfo then trivial, _, rep, _, id = GetAvailableQuestInfo(i) end
+      if not rep and not grey(id, nil, trivial) then SelectAvailableQuest(i); return end
     end
   end
 end
@@ -414,12 +432,15 @@ local function gossipShow()
   end
   if QoL.Get("autoTurnIn") and C_GossipInfo.GetActiveQuests then
     for _, q in ipairs(C_GossipInfo.GetActiveQuests() or {}) do
-      if q.isComplete and q.questID then C_GossipInfo.SelectActiveQuest(q.questID); return end
+      if q.isComplete and q.questID and not q.repeatable and (q.frequency or 0) == 0 and not QoL.RepeatableID(q.questID)
+        and not QoL.JustTurnedIn(q.title) then C_GossipInfo.SelectActiveQuest(q.questID); return end
     end
   end
   if QoL.Get("autoAccept") and C_GossipInfo.GetAvailableQuests then
     for _, q in ipairs(C_GossipInfo.GetAvailableQuests() or {}) do
-      if q.questID and not grey(q.questID, q.questLevel, q.isTrivial) then C_GossipInfo.SelectAvailableQuest(q.questID); return end
+      if q.questID and not q.repeatable and (q.frequency or 0) == 0 and not grey(q.questID, q.questLevel, q.isTrivial) then
+        C_GossipInfo.SelectAvailableQuest(q.questID); return
+      end
     end
   end
 end
@@ -1540,6 +1561,8 @@ local function hiddenByAddon(f)
 end
 local function applyPos(f, name)
   if padBag(name) or hiddenByAddon(f) then return end
+  -- "Open loot window at mouse" (6.2.6, Discord 0xveri 12.11.): the game puts the loot window at the cursor - leave it there
+  if name == "LootFrame" and GetCVar and GetCVar("lootUnderMouse") == "1" then return end
   local p = positions()[name]
   if not p or not QoL.Get("moveWindows") then return end
   if inCombat() and f:IsProtected() then return end
@@ -1765,7 +1788,7 @@ function QoL.CompletedQuestXP(list)
   return total, n
 end
 
-local xpMarker, xpBar, xpHooked -- xpHooked = { line = tooltip hook, done = { XP bars that have it } }
+local xpMarker, xpCap, xpBar, xpHooked -- xpHooked = { line = tooltip hook, done = { XP bars that have it } }
 local xpPending
 -- Each status bar container has its own XP bar: with a tracked reputation the game shows the
 -- reputation in one container and the XP in the other, so take the XP bar that is shown
@@ -1790,14 +1813,18 @@ local function findXPBar()
   return first, firstHolder
 end
 local function updateXP()
-  if not QoL.Get("questXP") then if xpMarker then xpMarker:Hide() end; return end
+  if not QoL.Get("questXP") then if xpMarker then xpMarker:Hide(); xpCap:Hide() end; return end
   local bar, holder = findXPBar()
   if not bar then return end
   if not xpMarker then
     xpMarker = bar:CreateTexture(nil, "ARTWORK", nil, 2)
     xpMarker:SetColorTexture(1, 0.82, 0.25, 0.45)
+    -- the pointed end, like the bar's own end (user 11.11. 23:13: "am Ende abrunden")
+    xpCap = bar:CreateTexture(nil, "ARTWORK", nil, 2)
+    if xpCap.SetTexture then FLT.SetTex(xpCap, "Interface\\AddOns\\OneForAll\\Assets\\xp_cap") end
+    if xpCap.SetVertexColor then xpCap:SetVertexColor(1, 0.82, 0.25, 0.45) end
   elseif xpBar ~= bar then
-    xpMarker:SetParent(bar) -- the shown XP bar changed (reputation tracked / untracked)
+    xpMarker:SetParent(bar); xpCap:SetParent(bar) -- the shown XP bar changed (reputation tracked / untracked)
   end
   xpBar = bar
   if not xpHooked then
@@ -1851,12 +1878,42 @@ local function updateXP()
   local xp = QoL.CompletedQuestXP()
   local cur, max = UnitXP and UnitXP("player") or 0, UnitXPMax and UnitXPMax("player") or 0
   local w = bar:GetWidth() or 0
+  xpCap:Hide()
   if xp <= 0 or max <= 0 or w <= 0 then xpMarker:Hide(); return end
-  local x1 = w * math.min(1, cur / max)
-  local x2 = w * math.min(1, (cur + xp) / max)
+  -- measure the track on the game's own fill (user 11.11.2026: at a full bar the mark stuck out past the end cap, and
+  -- guessing the cap with fixed insets put the mark on top of the fill in beta2): the fill starts where the track starts
+  -- and its width is cur/max of the track, so the track's 100 % end is where the fill would end at a full bar
+  local fill = bar.GetStatusBarTexture and bar:GetStatusBarTexture()
+  local bl = bar.GetLeft and bar:GetLeft()
+  local fl, fr = fill and fill.GetLeft and fill:GetLeft(), fill and fill.GetRight and fill:GetRight()
+  local frac = cur / max
+  local start, full = 0, w
+  if bl and fl and fr and frac >= 0.05 and fr > fl then
+    local s0, f0 = fl - bl, (fr - fl) / frac
+    if s0 >= 0 and f0 > w * 0.5 and s0 + f0 <= w * 1.05 then start, full = s0, math.min(f0, w - s0) end
+  end
+  local x1 = start + full * math.min(1, frac)
+  local x2 = start + full * math.min(1, (cur + xp) / max)
+  -- height of the game's own fill (the bar frame is taller: a full-height mark showed outside the frame, beta3);
+  -- the track ends in a point: measured on the user's screenshots (11.11. 23:04 / 23:27, beta7 stopped ~5 px short)
+  -- the point starts 0.27 fill heights before the 100 % end and ends 0.08 after it - the mark ends there with the same point (Assets/xp_cap.tga)
+  local top, bottom, hf = 0, 0, bar.GetHeight and bar:GetHeight() or 0
+  local bt, bb = bar.GetTop and bar:GetTop(), bar.GetBottom and bar:GetBottom()
+  local ft, fb = fill and fill.GetTop and fill:GetTop(), fill and fill.GetBottom and fill:GetBottom()
+  if bt and bb and ft and fb and ft > fb and ft <= bt + 1 and fb >= bb - 1 then top, bottom, hf = ft - bt, fb - bb, ft - fb end
+  local tipStart, tipEnd = start + full - hf * 0.27, start + full + hf * 0.08
+  local capped = x2 >= tipStart
+  if capped then x2 = tipStart end
+  if x2 - x1 < 1 and not capped then xpMarker:Hide(); return end
   xpMarker:ClearAllPoints()
-  xpMarker:SetPoint("TOPLEFT", bar, "TOPLEFT", x1, 0); xpMarker:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", x1, 0)
-  xpMarker:SetWidth(math.max(1, x2 - x1)); xpMarker:Show()
+  xpMarker:SetPoint("TOPLEFT", bar, "TOPLEFT", x1, top); xpMarker:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", x1, bottom)
+  xpMarker:SetWidth(math.max(x2 - x1, 0.01)); if x2 - x1 >= 1 then xpMarker:Show() else xpMarker:Hide() end
+  if capped then
+    local cx = math.max(x1, tipStart)
+    xpCap:ClearAllPoints()
+    xpCap:SetPoint("TOPLEFT", bar, "TOPLEFT", cx, top); xpCap:SetPoint("BOTTOMLEFT", bar, "BOTTOMLEFT", cx, bottom)
+    xpCap:SetWidth(math.max(tipEnd - tipStart, 1)); xpCap:Show()
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -1951,20 +2008,13 @@ local function recipeByItem(id)
   return recipeIndex[id]
 end
 
-local function charKey()
-  local n = UnitName and UnitName("player")
-  local realm = GetRealmName and GetRealmName() or ""
-  return n and (n .. "-" .. realm) or nil
-end
--- Copy this character's known recipes to the account (for "Twinks: ...").
+-- Copy this character's known recipes to the account (for "Twinks: ..."; key FLT.CharKey, 6.2.5).
 function QoL.SnapshotRecipes()
-  if type(OneForAllDB) ~= "table" or type(OneForAllCharDB) ~= "table" then return end
-  local key = charKey(); if not key then return end
+  if type(OneForAllDB) ~= "table" or type(OneForAllCharDB) ~= "table" or not FLT.CharKey then return end
   local profs = OneForAllCharDB.professions
   if type(profs) ~= "table" then return end
   OneForAllDB.altRecipes = OneForAllDB.altRecipes or {}
-  local _, cls = UnitClass("player")
-  local snap = { class = cls }
+  local snap = {}
   for prof, p in pairs(profs) do
     if type(p) == "table" and type(p.known) == "table" then
       local t = {}
@@ -1972,13 +2022,13 @@ function QoL.SnapshotRecipes()
       snap[prof] = t
     end
   end
-  OneForAllDB.altRecipes[key] = snap
+  FLT.CharSave(OneForAllDB.altRecipes, snap)
 end
 local function twinksKnowing(prof, s)
-  local out, me = {}, charKey()
-  for key, data in pairs(type(OneForAllDB) == "table" and OneForAllDB.altRecipes or {}) do
-    if key ~= me and type(data) == "table" and type(data[prof]) == "table" and data[prof][s] then
-      out[#out + 1] = short(key)
+  local out, all = {}, type(OneForAllDB) == "table" and OneForAllDB.altRecipes or {}
+  for key, data in pairs(all) do
+    if not FLT.IsMyChar(key) and type(data) == "table" and type(data[prof]) == "table" and data[prof][s] then
+      out[#out + 1] = FLT.CharLabel(all, key, data)
     end
   end
   table.sort(out)
@@ -1992,10 +2042,81 @@ local function nameList(list, max)
   return table.concat(t, ", ") .. string.format(" +%d", #list - max)
 end
 
+-- Disenchant value (6.2.6-beta33, user 12.11.: "disenchant value ... als schalter im qol ... nur wenn auctionator
+-- installiert ist ... im gleichen stil wie auctionator und darunter"): the expected worth of the dust, essences and shards
+-- (Data/Disenchant.lua chances x Auctionator prices) for green, blue and purple weapons and armor; nil = none / no prices
+do -- (in a block: the file is at Lua's limit of 200 locals)
+local NO_DE = { INVTYPE_BODY = true, INVTYPE_TABARD = true, INVTYPE_BAG = true, INVTYPE_AMMO = true, INVTYPE_QUIVER = true }
+-- (beta34, user 12.11.: "sehe keinen tooltip fuer disenchant" - the Forever client has these only under C_Item; looked
+-- up at call time so the tests can swap them)
+local function info(id) local f = (C_Item and C_Item.GetItemInfo) or GetItemInfo; if f then return f(id) end end
+local function instant(id) local f = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant; if f then return f(id) end end
+function QoL.DisenchantValue(id)
+  local SU, T = FLT.SkillUp, FLT.DISENCHANT
+  if not (SU and SU.AHPrice and T) then return nil end
+  local _, _, _, loc, _, cls = instant(id)
+  if not (cls == 2 or cls == 4) or not loc or loc == "" or NO_DE[loc] then return nil end
+  local _, _, q, ilvl = info(id)
+  local list = q and T[q]
+  if not (list and ilvl and ilvl > 0) then return nil end
+  for _, b in ipairs(list) do
+    if ilvl <= b[1] then
+      local parts = (cls == 2 and b.weapon) or b.armor
+      local v = 0
+      for _, p in ipairs(parts) do
+        local price = SU.AHPrice(p[1])
+        if price then v = v + price * p[2] * (p[3] + p[4]) / 2 end
+      end
+      return v > 0 and v or nil
+    end
+  end
+end
+end
+
+-- beta35 (user 12.11.: "bekommt man den eintrag irgendwie direkt drunter ... also unter Auction"): other addons
+-- (Syndicator's "Inventory") add lines between Auctionator's and ours - the last line (ours) is moved up right under
+-- Auctionator's "Auction" line, the lines in between move one down (text, colours, right side)
+do
+  local LABELS = { Auction = true, Auktion = true, ["Enchères"] = true, Subasta = true }
+  local function plain(t) return type(t) == "string" and t:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):match("^%s*(.-)%s*$") or nil end
+  function QoL.MoveUnderAuction(tt)
+    local name = tt and tt.GetName and tt:GetName()
+    local n = name and tt.NumLines and tt:NumLines()
+    if not n or n < 3 then return end
+    local A = Auctionator and Auctionator.Locales and Auctionator.Locales.Get
+    local own = A and select(2, pcall(A, "AUCTION"))
+    local at
+    for i = n - 1, 2, -1 do
+      local fs = _G[name .. "TextLeft" .. i]
+      local t = fs and plain(fs:GetText())
+      if t and (LABELS[t] or (type(own) == "string" and t == own)) then at = i; break end
+    end
+    if not at or at >= n - 1 then return end -- not there, or ours is right under it already
+    local function get(i)
+      local l, r = _G[name .. "TextLeft" .. i], _G[name .. "TextRight" .. i]
+      return { l:GetText(), { l:GetTextColor() }, r and r:GetText(), r and { r:GetTextColor() }, r and r:IsShown() }
+    end
+    local function put(i, d)
+      local l, r = _G[name .. "TextLeft" .. i], _G[name .. "TextRight" .. i]
+      l:SetText(d[1]); l:SetTextColor(unpack(d[2]))
+      if r then r:SetText(d[3]); if d[4] then r:SetTextColor(unpack(d[4])) end; r:SetShown(d[5] and true or false) end
+    end
+    local mine = get(n)
+    for i = n, at + 2, -1 do put(i, get(i - 1)) end
+    put(at + 1, mine)
+    tt:Show() -- lay the lines out again
+  end
+end
+
 local function addItemLines(tt, link)
   if type(link) ~= "string" then return end
   local id = tonumber(link:match("item:(%d+)"))
   if not id then return end
+  -- right under Auctionator's "Vendor" / "Auction" lines, in their look (only with Auctionator: the prices come from it)
+  if QoL.Get("deValue") and FLT.SkillUp and FLT.SkillUp.HasAuctionator() then
+    local v = QoL.DisenchantValue(id)
+    if v then tt:AddDoubleLine(L["Disenchant"], money(v), 1, 0.82, 0, 1, 1, 1); pcall(QoL.MoveUnderAuction, tt) end
+  end
   if QoL.Get("bossDrops") then
     local drops = bossDrops(id)
     if drops then tt:AddLine(L["Drops from:"] .. " " .. nameList(drops, 2), 0.95, 0.80, 0.45, true) end
@@ -2069,7 +2190,13 @@ local SHORT = { -- { pattern, result } in this order; %1 %2 = captures (percent 
   { "^Increases your chance to dodge an attack by ([%d%.]+)%%%.$", "+%1%% Dodge" },
   { "^Increases your chance to parry an attack by ([%d%.]+)%%%.$", "+%1%% Parry" },
   { "^Increases your chance to block attacks with a shield by ([%d%.]+)%%%.$", "+%1%% Block" },
-  { "^Increases the block value of your shield by (%d+)%.$", "+%1 Block Value" },
+  { "^Increases the [Bb]lock [Vv]alue of your shield by (%d+)%.$", "+%1 Block Value" }, -- "Block Value" (Discord 11.11.)
+  -- 6.2.5 (Discord vkinglouie 11.11.: lines left long), checked against all equip spells of the Forever client
+  { "^Increases all threat generated by ([%d%.]+)%%%.$", "+%1%% Threat" },
+  { "^Decreases all threat generated by ([%d%.]+)%%%.$", "-%1%% Threat" },
+  { "^%+(%d+) Attack Power in Cat, Bear, and Dire Bear forms only%.$", "+%1 Feral Attack Power" },
+  { "^Increases melee and ranged attack power by (%d+)%.$", "+%1 Attack Power" },
+  { "^%+(%d+) (%a+)%.$", "+%1 %2" }, -- "+5 Spirit."
   { "^Decreases the magical resistances of your spell targets by (%d+)%.$", "+%1 Spell Penetration" },
   { "^Increases your attack speed by ([%d%.]+)%%%.$", "+%1%% Attack Speed" },
   { "^Increased ([%a%- ]+) %+(%d+)%.$", "+%2 %1" }, -- weapon skills ("Increased Daggers +3.")
@@ -2137,7 +2264,47 @@ local function addQuestLines(tt)
   local _, unit = tt:GetUnit()
   FLT.MapQuests.AddUnitLines(tt, unit)
 end
+-- Tooltip at the mouse (6.2.7-beta15, user 13.11.: "eine option damit der tool tip an der maus geankert werden kann ...
+-- top mit jeweils left center right und das gleiche mit bottom ... in dungeon, raids nicht aktiv und auf pvp schlachtfeldern,
+-- das aber getrennt"). Only tooltips that use the game's default place (GameTooltip_SetDefaultAnchor: units in the world,
+-- action buttons, ...); "Top left" = above the mouse, to its left. Follows the mouse only while such a tooltip is shown.
+do -- own block: this file is at Lua's limit of 200 top-level locals
+QoL.TIP_ANCHORS = {
+  { key = "TOPLEFT", label = N"Top left" }, { key = "TOP", label = N"Top center" }, { key = "TOPRIGHT", label = N"Top right" },
+  { key = "BOTTOMLEFT", label = N"Bottom left" }, { key = "BOTTOM", label = N"Bottom center" }, { key = "BOTTOMRIGHT", label = N"Bottom right" },
+}
+local TIP_POINT = { -- tooltip corner at the cursor, offset (the bottom ones keep clear of the mouse pointer)
+  TOPLEFT = { "BOTTOMRIGHT", -4, 6 }, TOP = { "BOTTOM", 0, 8 }, TOPRIGHT = { "BOTTOMLEFT", 4, 6 },
+  BOTTOMLEFT = { "TOPRIGHT", -4, -20 }, BOTTOM = { "TOP", 0, -24 }, BOTTOMRIGHT = { "TOPLEFT", 18, -20 },
+}
+local function tipMouseOff()
+  if not QoL.Get("tipMouse") then return true end
+  local inside, kind = IsInInstance and IsInInstance()
+  if not inside then return false end
+  if (kind == "party" or kind == "raid" or kind == "scenario") and QoL.Get("tipMouseNoDungeon") then return true end
+  if (kind == "pvp" or kind == "arena") and QoL.Get("tipMouseNoPvP") then return true end
+  return false
+end
+local function tipAtMouse(tt)
+  local p = TIP_POINT[QoL.Get("tipMousePos") or "BOTTOMRIGHT"] or TIP_POINT.BOTTOMRIGHT
+  local x, y = GetCursorPosition()
+  local sc = UIParent:GetEffectiveScale()
+  tt:ClearAllPoints(); tt:SetPoint(p[1], UIParent, "BOTTOMLEFT", x / sc + p[2], y / sc + p[3])
+end
+function QoL.SetupTipMouse()
+  if not (hooksecurefunc and GameTooltip and GameTooltip.HookScript and GetCursorPosition) then return end
+  hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tt, parent)
+    tt._ofaMouse = nil
+    if tt ~= GameTooltip or tipMouseOff() then return end
+    tt:SetOwner(parent or UIParent, "ANCHOR_NONE"); tt._ofaMouse = true; tipAtMouse(tt)
+  end)
+  GameTooltip:HookScript("OnUpdate", function(tt) if tt._ofaMouse then tipAtMouse(tt) end end)
+  GameTooltip:HookScript("OnHide", function(tt) tt._ofaMouse = nil end)
+end
+end
+
 local function setupTooltips()
+  pcall(QoL.SetupTipMouse)
   if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType and Enum.TooltipDataType.Unit then
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tt)
       if tt == GameTooltip then pcall(addTargetLine, tt); pcall(addQuestLines, tt) end
@@ -2146,7 +2313,7 @@ local function setupTooltips()
     pcall(GameTooltip.HookScript, GameTooltip, "OnTooltipSetUnit", function(tt) pcall(addTargetLine, tt); pcall(addQuestLines, tt) end)
   end
   local function handler(tt)
-    if not (QoL.Get("bossDrops") or QoL.Get("recipeTip") or QoL.Get("gearValue")) then return end
+    if not (QoL.Get("bossDrops") or QoL.Get("recipeTip") or QoL.Get("gearValue") or QoL.Get("deValue")) then return end
     if not tt or not tt.GetItem then return end
     local _, link = tt:GetItem()
     addItemLines(tt, link)
@@ -2254,11 +2421,15 @@ local function feedAdd(icon, text, r, g, b)
     e = CreateFrame("Frame", nil, f); e:SetSize(FEED_W - 8, 20)
     e.icon = e:CreateTexture(nil, "ARTWORK"); e.icon:SetSize(18, 18); e.icon:SetPoint("LEFT")
     e.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    e.text = e:CreateFontString(nil, "OVERLAY", "GameFontNormal"); e.text:SetPoint("LEFT", e.icon, "RIGHT", 6, 0)
+    e.text = e:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     e.text:SetJustifyH("LEFT"); e.text:SetWidth(FEED_W - 34); e.text:SetWordWrap(false)
     do local font, _, flags = e.text:GetFont(); if font then e.text:SetFont(font, 14, "OUTLINE") end end
   end
-  e.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+  -- icon = false: no icon, the text starts at the left (money: the coins are in the text already; 6.2.6, user 11.11.)
+  e.icon:SetShown(icon ~= false)
+  e.text:ClearAllPoints()
+  if icon == false then e.text:SetPoint("LEFT", e, "LEFT", 0, 0)
+  else e.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark"); e.text:SetPoint("LEFT", e.icon, "RIGHT", 6, 0) end
   e.text:SetText(text); e.text:SetTextColor(r or 1, g or 1, b or 1)
   -- keep a gap to the entry above
   local newest = feedActive[#feedActive]
@@ -2327,7 +2498,7 @@ end
 local lastMoney, moneyMsgAt, pendingGain, pendingAt = nil, -10, 0, -10
 local function showMoney(amount)
   if amount > 0 and QoL.Get("lootFeed") and QoL.Get("lootFeedMoney") then
-    feedAdd("Interface\\Icons\\INV_Misc_Coin_02", "+" .. money(amount), 1, 0.85, 0.3)
+    feedAdd(false, "+" .. money(amount), 1, 0.85, 0.3)
   end
 end
 local function moneyChanged()
@@ -2348,7 +2519,7 @@ end
 function QoL.TestLootFeed()
   feedAdd("Interface\\Icons\\INV_Misc_Pelt_Wolf_01", "+3 Light Leather", 1, 1, 1)
   feedAdd("Interface\\Icons\\INV_Sword_04", "+Trogg Scepter", 0, 0.44, 0.87)
-  feedAdd("Interface\\Icons\\INV_Misc_Coin_02", "+" .. money(31240), 1, 0.85, 0.3)
+  feedAdd(false, "+" .. money(31240), 1, 0.85, 0.3)
   feedAdd("Interface\\Icons\\INV_Sword_39", "+Thunderfury, Blessed Blade of the Windseeker", 1, 0.5, 0)
 end
 

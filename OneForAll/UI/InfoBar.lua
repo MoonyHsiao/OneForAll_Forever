@@ -7,7 +7,8 @@ local _, FLT = ...
 -- Lean: events only for the chosen elements and only while the bar is on; changes are gathered and drawn once (0.2 s);
 -- the one 1 s ticker runs only while the band is open and an element needs it (clock, FPS, location, hearthstone).
 -- Settings: OneForAllDB.qol.infoBar (on), .infoBarItems { element keys in order }, .infoBarPinned;
--- gold per character for the gold tooltip: OneForAllDB.infoGold["Realm|Name"] = { copper, class token }.
+-- gold per character for the gold tooltip: OneForAllDB.infoGold[FLT.CharKey()] = { copper, class token, name =, realm = }
+-- (6.2.5: GUID key, Core.lua; old entries "Realm|Name").
 
 local L = FLT.L or setmetatable({}, { __index = function(_, k) return k end }) -- (tests without Locales)
 local function N(s) return s end
@@ -51,6 +52,7 @@ local REAGENT = { WARLOCK = 6265, MAGE = 17020, PRIEST = 17029, DRUID = 17026, S
 -- Elements -----------------------------------------------------------------------------------------------------------
 -- key, label (N), icon, events, tick (needs the 1 s ticker), text() -> string, tip(tt), click()
 local E = {}
+IB.E = E -- (tests)
 local ORDER = {}
 local function add(e) E[e.key] = e; ORDER[#ORDER + 1] = e.key end
 
@@ -75,13 +77,18 @@ add({ key = "fps", label = N"FPS and latency", icon = "Interface\\Icons\\INV_Giz
     tt:AddDoubleLine(L["Latency (world)"], fmt("%d ms", world or 0), 1, 0.82, 0, 1, 1, 1)
   end })
 
-local sessionStart
-local function charKey() return (GetRealmName and GetRealmName() or "?") .. "|" .. (UnitName("player") or "?") end
+local sessionStart, moneyEvent
+-- 6.2.5 (Discord amalae. 11.11.: every alt had 0 gold): the money read too early after login or at logout can be 0 -
+-- a 0 replaces a stored amount only after a PLAYER_MONEY event (the money really changed); nothing saved at logout
 local function saveGold()
-  if type(OneForAllDB) ~= "table" or not GetMoney then return end
+  if type(OneForAllDB) ~= "table" or not GetMoney or not FLT.CharKey then return end
   OneForAllDB.infoGold = OneForAllDB.infoGold or {}
+  local t, c = OneForAllDB.infoGold, GetMoney() or 0
+  local legacy = (GetRealmName and GetRealmName() or "?") .. "|" .. (UnitName("player") or "?")
+  local old = t[FLT.CharKey()]
+  if c == 0 and not moneyEvent and type(old) == "table" and (old[1] or 0) > 0 then return end
   local _, cls = UnitClass("player")
-  OneForAllDB.infoGold[charKey()] = { GetMoney(), cls }
+  FLT.CharSave(t, { c, cls }, legacy)
 end
 add({ key = "gold", label = N"Gold", icon = "Interface\\Icons\\INV_Misc_Coin_02", events = { "PLAYER_MONEY" },
   text = function()
@@ -96,9 +103,12 @@ add({ key = "gold", label = N"Gold", icon = "Interface\\Icons\\INV_Misc_Coin_02"
     tt:AddDoubleLine(L["This session"], (diff < 0 and "-" or "+") .. money(math.abs(diff)), 1, 0.82, 0,
       diff < 0 and 1 or 0.3, diff < 0 and 0.3 or 1, 0.3)
     local all, total, realm = {}, 0, GetRealmName and GetRealmName() or "?"
-    for k, v in pairs(type(OneForAllDB) == "table" and OneForAllDB.infoGold or {}) do
-      local r, n = k:match("^(.-)|(.*)$")
-      if r == realm and type(v) == "table" then all[#all + 1] = { n, v[1] or 0, v[2] }; total = total + (v[1] or 0) end
+    local t = type(OneForAllDB) == "table" and OneForAllDB.infoGold or {}
+    for k, v in pairs(t) do
+      local _, r, cls = FLT.CharOf(k, v)
+      if r == realm and type(v) == "table" then
+        all[#all + 1] = { FLT.CharLabel(t, k, v), v[1] or 0, cls }; total = total + (v[1] or 0)
+      end
     end
     if #all > 1 then
       table.sort(all, function(a, b) return a[2] > b[2] end)
@@ -459,6 +469,11 @@ end
 IB._moveItem = moveItem -- tests
 IB._items = items -- tests
 local function pinned() local d = db(); return d and d.infoBarPinned == true end
+-- the place (6.2.5, user 10.11.): Shift-drag moves the bar along the screen edge and to the top or the bottom half;
+-- qol.infoBarEdge = "BOTTOM" (nil = top), qol.infoBarX = offset from the middle (bar units, nil = middle). At the bottom
+-- the bar is turned upside down: the tab sits at the bottom edge and the bar slides in from below.
+local function bottom() local d = db(); return d and d.infoBarEdge == "BOTTOM" end
+local function barX() local d = db(); return tonumber(d and d.infoBarX) or 0 end
 
 -- Frames ---------------------------------------------------------------------------------------------------------------
 local band, handle, cells, ev, ticker = nil, nil, {}, nil, nil
@@ -472,12 +487,13 @@ local H, PAD, ICON = 24, 10, 14
 
 local function tipFor(cell)
   local e = E[cell.key]
-  GameTooltip:SetOwner(cell, "ANCHOR_BOTTOM")
+  GameTooltip:SetOwner(cell, bottom() and "ANCHOR_TOP" or "ANCHOR_BOTTOM")
   GameTooltip:AddLine(L[e.label], 1, 0.82, 0)
   if e.tip then e.tip(GameTooltip) end
   if e.click then GameTooltip:AddLine(L["Click: open"], 0.6, 0.6, 0.6) end
   GameTooltip:AddLine(L["Right-click: elements and pin"], 0.6, 0.6, 0.6)
   GameTooltip:AddLine(L["Drag: change the order"], 0.6, 0.6, 0.6)
+  GameTooltip:AddLine(L["Shift-drag: move the bar"], 0.6, 0.6, 0.6)
   GameTooltip:Show()
 end
 
@@ -487,7 +503,7 @@ local secures, secureFolds = {}, false -- secure buttons over the cells of click
 local function secureShown() for _, b in ipairs(secures) do if b:IsShown() then return true end end return false end
 local function secureUnderMouse() for _, b in ipairs(secures) do if b:IsShown() and b:IsMouseOver() then return true end end return false end
 local shownP, animTarget, animFrame = 0, nil, nil -- the band slides: 0 = up out of view, 1 = in place
-local foldLater -- forward
+local foldLater, applyEdge -- forward
 local function cell(i)
   local c = cells[i]
   if c then return c end
@@ -514,7 +530,7 @@ end
 -- draw the texts and place the cells (the band grows with them, centred at the top)
 local function layout()
   local list = items()
-  local x = PAD
+  local x, y = PAD, bottom() and 1 or -1 -- the text sits a bit away from the gold line
   for i, k in ipairs(list) do
     local c = cell(i)
     local e = E[k]
@@ -536,8 +552,8 @@ local function layout()
     c.text:SetText(textOf[k])
     local w = (e.noIcon and 0 or ICON + 4) + math.ceil(c.text:GetStringWidth() or 20)
     w = math.max(w, widthOf[k] or 0); widthOf[k] = w
-    c:SetWidth(w); c:ClearAllPoints(); c:SetPoint("LEFT", band, "LEFT", x, -1)
-    c.sep:ClearAllPoints(); c.sep:SetPoint("CENTER", band, "LEFT", x - PAD / 2 - 1, -1); c.sep:SetShown(i > 1)
+    c:SetWidth(w); c:ClearAllPoints(); c:SetPoint("LEFT", band, "LEFT", x, y)
+    c.sep:ClearAllPoints(); c.sep:SetPoint("CENTER", band, "LEFT", x - PAD / 2 - 1, y); c.sep:SetShown(i > 1)
     c:Show()
     x = x + w + PAD + 2
   end
@@ -561,8 +577,9 @@ local function dropIndex()
   end
   return #list + 1
 end
-local dragKey
+local dragKey, moving
 function IB.DragStart(c)
+  if IsShiftKeyDown and IsShiftKeyDown() then IB.MoveStart(); return end
   dragKey = c.key
   GameTooltip:Hide(); foldLater(false)
   c:SetAlpha(0.4)
@@ -577,6 +594,7 @@ function IB.DragStart(c)
   end)
 end
 function IB.DragStop(c)
+  if moving then IB.MoveStop(); return end
   band:SetScript("OnUpdate", nil)
   if band.mark then band.mark:Hide() end
   c:SetAlpha(1)
@@ -683,7 +701,14 @@ local SLIDE = 0.2
 local function placeBand(p)
   shownP = p
   local e = p * p * (3 - 2 * p) -- eased
-  band:ClearAllPoints(); band:SetPoint("TOP", UIParent, "TOP", 0, 2 + (1 - e) * (H + 4)); band:SetAlpha((0.2 + 0.8 * e) * barAlpha())
+  local off = 2 + (1 - e) * (H + 4)
+  band:ClearAllPoints()
+  if bottom() then band:SetPoint("BOTTOM", UIParent, "BOTTOM", barX(), -off) else band:SetPoint("TOP", UIParent, "TOP", barX(), off) end
+  band:SetAlpha((0.2 + 0.8 * e) * barAlpha())
+end
+local function placeHandle()
+  handle:ClearAllPoints()
+  if bottom() then handle:SetPoint("BOTTOM", UIParent, "BOTTOM", barX(), -2) else handle:SetPoint("TOP", UIParent, "TOP", barX(), 2) end
 end
 local function arrived()
   if animTarget == 0 then band:Hide(); handle:SetShown(on() and not open) else syncSecure() end
@@ -815,6 +840,12 @@ fillMain = function()
   opts[1] = { key = "#pin", label = L["Pinned (stays open)"], checked = pinned(), hover = hideSub,
     icon = pinned() and "Interface\\Minimap\\Minimap-Waypoint-MapPin-Tracked" or "Interface\\Minimap\\Minimap-Waypoint-MapPin-Untracked", pick = function()
     local d = db(); if d then d.infoBarPinned = not pinned() or nil end; IB.Apply(true); fillMain() end }
+  opts[2] = { key = "#bottom", label = L["At the bottom of the screen"], checked = bottom(), hover = hideSub, pick = function()
+    local d = db(); if d then d.infoBarEdge = not bottom() and "BOTTOM" or nil; applyEdge() end; fillMain() end }
+  if barX() ~= 0 then
+    opts[3] = { key = "#middle", label = L["Back to the middle"], hover = hideSub, pick = function()
+      local d = db(); if d then d.infoBarX = nil; applyEdge() end; fillMain() end }
+  end
   for _, k in ipairs(ORDER) do
     if not E[k].blizz then
       opts[#opts + 1] = { key = k, label = L[E[k].label], checked = ch[k], hover = hideSub, pick = function() toggleItem(k); fillMain() end }
@@ -834,7 +865,9 @@ openMenu = function()
   local x, y = 0, 0
   if GetCursorPosition then x, y = GetCursorPosition() end
   fillMain()
-  menu:ClearAllPoints(); menu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale - 20, y / scale + 6)
+  menu:ClearAllPoints()
+  if bottom() then menu:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / scale - 20, y / scale + 14) -- above the bar
+  else menu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale - 20, y / scale + 6) end
   menu:Show(); menuStay()
 end
 IB._menus = function() return menu, subMenu end -- tests
@@ -869,16 +902,72 @@ local function shape(f, h, suffix)
   local cx = CAPS[suffix]
   local function tex(file, sub) local t = f:CreateTexture(nil, "BACKGROUND", nil, sub); t:SetTexture(UI.ASSET_ROOT .. file .. suffix, nil, nil, "TRILINEAR")
     if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false); t:SetTexelSnappingBias(0) end; return t end
-  local inner = h * (1 - cx)
-  f.fills = {}
+  f.fills, f.parts, f.capH, f.capX = {}, {}, h, cx
   -- the fill (white, tinted with the chosen colour) under the line (beta43)
   for _, part in ipairs({ "_fill", "" }) do
     local l, r, m = tex("infobar_cap" .. part, part == "" and 1 or 0), tex("infobar_cap" .. part, part == "" and 1 or 0), tex("infobar_mid" .. part, part == "" and 1 or 0)
-    l:SetSize(h, h); l:SetPoint("TOPLEFT", f, "TOPLEFT", -h * cx, 0)
-    r:SetSize(h, h); r:SetPoint("TOPRIGHT", f, "TOPRIGHT", h * cx, 0); r:SetTexCoord(1, 0, 0, 1)
-    m:SetPoint("TOPLEFT", f, "TOPLEFT", inner, 0); m:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -inner, 0)
+    l:SetSize(h, h); r:SetSize(h, h)
+    f.parts[#f.parts + 1] = { l, r, m }
     if part ~= "" then f.fills[1], f.fills[2], f.fills[3] = l, r, m end
   end
+end
+-- top (as drawn) or at the bottom upside down (6.2.5)
+local function orient(f, down)
+  local h, cx = f.capH, f.capX
+  local inner, v, t0, t1 = h * (1 - cx), down and "BOTTOM" or "TOP", down and 1 or 0, down and 0 or 1
+  for _, p in ipairs(f.parts) do
+    local l, r, m = p[1], p[2], p[3]
+    l:ClearAllPoints(); l:SetPoint(v .. "LEFT", f, v .. "LEFT", -h * cx, 0); l:SetTexCoord(0, 1, t0, t1)
+    r:ClearAllPoints(); r:SetPoint(v .. "RIGHT", f, v .. "RIGHT", h * cx, 0); r:SetTexCoord(1, 0, t0, t1)
+    m:ClearAllPoints(); m:SetPoint("TOPLEFT", f, "TOPLEFT", inner, 0); m:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -inner, 0)
+    m:SetTexCoord(0, 1, t0, t1)
+  end
+end
+applyEdge = function()
+  local down = bottom()
+  orient(band, down); orient(handle, down)
+  band.empty:ClearAllPoints(); band.empty:SetPoint("LEFT", PAD, down and 1 or -1)
+  placeHandle(); placeBand(shownP)
+  if open then layout() end
+  if not moving and C_Timer and C_Timer.After then C_Timer.After(0, syncSecure) end
+end
+-- Shift-drag: the bar follows the cursor (an OnUpdate only while dragging); the half of the screen decides top or bottom,
+-- near the middle it snaps to the middle. Not in combat while a click button lies on it (those can't move then).
+function IB.MoveStart()
+  if inCombat() and secureShown() then return end
+  local d = db(); if not d or not GetCursorPosition then return end
+  moving = true; GameTooltip:Hide(); foldLater(false); closeMenu()
+  if not inCombat() then for _, b in ipairs(secures) do unlight(b); b:Hide() end end
+  local s = band:GetEffectiveScale() or 1
+  local grab = select(1, GetCursorPosition()) / s - ((band:GetLeft() or 0) + (band:GetWidth() or 0) / 2)
+  band:SetScript("OnUpdate", function()
+    -- the button was let go: stop here (beta8, user 11.11.: the bar kept following the cursor - OnDragStop never came
+    -- when the drag began on a click button, which is hidden while moving)
+    if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then IB.MoveStop(); return end
+    local x, y = GetCursorPosition(); x, y = x / s, y / s
+    local k = (UIParent:GetEffectiveScale() or 1) / s
+    local sw, sh = (UIParent:GetWidth() or 0) * k, (UIParent:GetHeight() or 0) * k
+    local half = math.max(0, (sw - (band:GetWidth() or 0)) / 2)
+    local nx = math.floor(math.max(-half, math.min(half, x - grab - sw / 2)) + 0.5)
+    if math.abs(nx) < 12 then nx = 0 end
+    local edge = y < sh / 2 and "BOTTOM" or nil
+    local flip = edge ~= d.infoBarEdge
+    d.infoBarX, d.infoBarEdge = nx ~= 0 and nx or nil, edge
+    if flip then applyEdge() else placeBand(shownP); placeHandle() end
+  end)
+end
+-- Quality of Life "Bar position: Reset" (user 11.11.): top middle again
+function IB.ResetPosition()
+  local d = db(); if not d then return end
+  d.infoBarX, d.infoBarEdge = nil, nil
+  if band then applyEdge() end
+end
+function IB.MoveStop()
+  if not moving then return end
+  moving = false
+  band:SetScript("OnUpdate", nil)
+  if C_Timer and C_Timer.After then C_Timer.After(0, syncSecure) end
+  foldLater(true)
 end
 -- colour and opacity from Quality of Life
 local function applyLook()
@@ -901,7 +990,10 @@ local function build()
   band:SetScript("OnEnter", function() foldLater(false) end)
   band:SetScript("OnLeave", function() foldLater(true) end)
   band:SetScript("OnMouseUp", function(self, button) if button == "RightButton" then openMenu(self) end end)
-  -- the handle: a small tab at the top while the bar is folded up; the mouse on it opens the bar
+  band:RegisterForDrag("LeftButton") -- Shift-drag on the empty parts moves it too
+  band:SetScript("OnDragStart", function() if IsShiftKeyDown and IsShiftKeyDown() then IB.MoveStart() end end)
+  band:SetScript("OnDragStop", function() if moving then IB.MoveStop() end end)
+  -- the handle: a small tab at the edge while the bar is folded up; the mouse on it opens the bar
   handle = CreateFrame("Button", nil, UIParent); handle:SetFrameStrata("HIGH"); handle:SetSize(128, 10) -- user 08.11.: twice as wide, no arrow
   handle:SetPoint("TOP", UIParent, "TOP", 0, 2); handle:Hide()
   shape(handle, 10, "_s")
@@ -910,7 +1002,7 @@ local function build()
   -- one event frame: only the events of the chosen elements
   ev = CreateFrame("Frame")
   ev:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGOUT" then if items()[1] then saveGold() end; return end
+    if event == "PLAYER_MONEY" then moneyEvent = true end
     if event == "PLAYER_REGEN_ENABLED" then
       if secureFolds then secureFolds = false; foldLater(true) end
       syncSecure(); return
@@ -930,7 +1022,6 @@ local function registerEvents()
       table.insert(byEvent[e], k)
     end
   end
-  pcall(ev.RegisterEvent, ev, "PLAYER_LOGOUT")
   for _, k in ipairs(items()) do if E[k].secureItem or E[k].secureClick then pcall(ev.RegisterEvent, ev, "PLAYER_REGEN_ENABLED") end end
 end
 
@@ -952,7 +1043,7 @@ function IB.Apply(keepOpen)
     return
   end
   if not band then build() end
-  applyScale(); applyLook()
+  applyScale(); applyLook(); applyEdge()
   registerEvents()
   -- a guild element asks the server for the roster once (the client does not keep it fresh on its own)
   for _, k in ipairs(items()) do if k == "guild" and C_GuildInfo and C_GuildInfo.GuildRoster then call(C_GuildInfo.GuildRoster) end end

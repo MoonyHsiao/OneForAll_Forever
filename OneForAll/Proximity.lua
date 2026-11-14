@@ -361,6 +361,8 @@ function FLT:CheckNearbyBooks()
   end
   if not C_Map or not C_Map.GetBestMapForUnit then return end
   if IsInInstance and IsInInstance() then return end
+  -- 6.2.7: optionally not while flying (on a flight path, too)
+  if FLT.QoL and FLT.QoL.Get("bookAlertNoFlying") and ((UnitOnTaxi and UnitOnTaxi("player")) or (IsFlying and IsFlying())) then return end
 
   local currentMapID = C_Map.GetBestMapForUnit("player")
   if not currentMapID then return end
